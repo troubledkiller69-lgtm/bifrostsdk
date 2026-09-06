@@ -1,0 +1,248 @@
+{
+  "protocol": {
+    "name": "bifrost",
+    "version": "1.3",
+    "schema_version": 1,
+    "description": "BIFROST SDK Electron <-> Python backend IPC contract. Single source of truth for the desktop app bridge. v1.2 adds per-operation stream routing and cooperative cancellation. v1.3 adds the analyzer/decompiler surface (analyze, analyze_export, analyze_probe, decompile_fn).",
+    "last_updated": "2026-09",
+    "status": "enforced (stream-tagged events + cancel command active)",
+    "notes": [
+      "All new command/event changes must update this file first.",
+      "Streaming events carry a `stream` tag (the command name) used by main.js for per-operation channel routing.",
+      "Request-response correlation: Python echoes the request `id` as `_id`."
+    ]
+  },
+
+  "transport": {
+    "mechanism": "stdio line-delimited JSON (newline-terminated)",
+    "direction": "bidirectional",
+    "encoding": "utf-8",
+    "request_response": {
+      "style": "command with optional id + envelope",
+      "channel": "python-command (via ipcRenderer.invoke)",
+      "timeout_ms": 15000,
+      "correlation": "id field echoed in response as _id; envelope includes protocol_version"
+    },
+    "streaming": {
+      "style": "fire-and-forget with stream tag; cancellation via `cancel` command + shared CANCEL_EVENT",
+      "channels": ["start-dump", "start-spoofing", "start-generation", "start-hunt", "start-analyze", "start-analyze-export"],
+      "responses": "arrive asynchronously via stdout as typed events tagged with `stream`",
+      "cancellation": "renderer sends `cancel` {operation}; backend sets CANCEL_EVENT, operations abort at checkpoints and emit a result with code CANCELLED"
+    }
+  },
+
+  "error_shape": {
+    "code": "string (e.g. 'UNKNOWN_COMMAND', 'VALIDATION_ERROR', 'TIMEOUT', 'BRIDGE_OFFLINE', 'CANCELLED')",
+    "error": "string (human readable message) — chosen for consistency with existing result/log payloads",
+    "details": "object (optional engine- or command-specific context)"
+  },
+
+  "commands": {
+    "ping": {
+      "direction": "request-response",
+      "args": {},
+      "response": {
+        "status": "string (e.g. 'ok')",
+        "version": "string (live build stamp)",
+        "protocol_version": "string"
+      },
+      "notes": "Health check. Used by renderer to detect bridge liveness."
+    },
+    "list_processes": {
+      "direction": "request-response",
+      "args": {},
+      "response": "{type:'result', data: array of {pid, name, window, engine}}",
+      "notes": "Returns filtered process list with engine annotation from KNOWN_GAME_EXES."
+    },
+    "spoof_info": {
+      "direction": "request-response",
+      "args": {},
+      "response": "{type:'result', data: object (current spoof state)}",
+      "notes": "Query current spoofing status."
+    },
+    "bridge_info": {
+      "direction": "request-response",
+      "args": {},
+      "response": "{type:'result', data: {build_stamp, protocol_version, features}}",
+      "notes": "Return live backend build signature + feature flags so the UI can verify which revision is running."
+    },
+    "spoof_restore": {
+      "direction": "request-response",
+      "args": {},
+      "response": "{type:'result', data: object (result of restore)}",
+      "notes": "Restore original spoof state."
+    },
+    "read_memory": {
+      "direction": "request-response",
+      "args": {
+        "pid": "number (32-bit)",
+        "address": "number (hex-parsed)",
+        "size": "number (1..65536)"
+      },
+      "response": "{type:'result', data: {pid, address, size, bytes: [int]}} or {type:'result', data: {error, code}}",
+      "notes": "Raw process memory read for the Memory Viewer. Uses stealth access with direct fallback."
+    },
+    "ac_detect": {
+      "direction": "request-response",
+      "args": {},
+      "response": "{type:'result', data: {<ac_id>: {running, driver_loaded, service_status}}}",
+      "notes": "Scans processes/services/drivers for known anti-cheat systems (eac, battleye, vanguard, ricochet, nprotect)."
+    },
+    "analyze_probe": {
+      "direction": "request-response",
+      "args": {},
+      "response": "{type:'result', data: {rizin: {available, exe, version, decompiler}, iced: {available}, default_engine}}",
+      "notes": "Reports decompiler engine availability. rizin+rz-ghidra when provisioned (tools/provision_rizin.ps1), iced-x86 otherwise. No rizin process spawned when missing."
+    },
+    "decompile_fn": {
+      "direction": "request-response",
+      "args": {
+        "addr": "number (function address from an analyze result)"
+      },
+      "response": "{type:'result', data: {addr, code}} or {error, code: NO_SESSION | BAD_ARGS | DECOMPILE_FAILED}",
+      "notes": "Decompiles one function from the open rizin session (pdgj). Bodies cached; sessions idle-close after 5 minutes."
+    },
+    "cancel": {
+      "direction": "request-response",
+      "args": {
+        "operation": "string (dump | spoof | generate | hunt | analyze | analyze_export)"
+      },
+      "response": "{status:'ok', cancelled: <operation>}",
+      "notes": "Sets the shared CANCEL_EVENT. Streaming operations abort at their next checkpoint."
+    },
+    "test_webhook": {
+      "direction": "request-response",
+      "args": {
+        "url": "string (optional)"
+      },
+      "response": "object",
+      "notes": "Test webhook delivery."
+    }
+  },
+
+  "streaming_commands": {
+    "dump": {
+      "direction": "fire-and-forget",
+      "args": {
+        "engine": "string (e.g. 'source', 'unreal5', 'blizzard', 'unity_mono')",
+        "pid": "number",
+        "name": "string (exe name)",
+        "stealth": "string enum (auto | driver | hijack | direct)",
+        "webhook": "string (optional url)",
+        "force_discovery": "boolean",
+        "regenerate": "boolean"
+      },
+      "events_emitted": ["dump-log", "dump-progress", "dump-complete", "dump-error"],
+      "notes": "Long-running. Triggers run_dump in gui_bridge -> engine dumper. Cancellable via CANCEL_EVENT."
+    },
+    "spoof": {
+      "direction": "fire-and-forget",
+      "args": "object (spoof options)",
+      "events_emitted": ["spoof-log", "spoof-progress", "spoof-complete", "spoof-error"],
+      "notes": ""
+    },
+    "generate": {
+      "direction": "fire-and-forget",
+      "args": "object (generation options)",
+      "events_emitted": ["gen-log", "gen-progress", "gen-complete", "gen-error"],
+      "notes": ""
+    },
+    "hunt": {
+      "direction": "fire-and-forget",
+      "args": "object (hunter options)",
+      "events_emitted": ["hunt-log", "hunt-progress", "hunt-complete", "hunt-error"],
+      "notes": ""
+    },
+    "analyze": {
+      "direction": "fire-and-forget",
+      "args": {
+        "source": {
+          "type": "file | module",
+          "path": "string (file source)",
+          "pid": "number (module source)",
+          "module": "string (module source, exe/dll name)"
+        },
+        "engine": "string (auto | rizin | iced; default auto)",
+        "limit": "number (function list cap, 1..2000, default 400)"
+      },
+      "events_emitted": ["analyze-log", "analyze-progress", "analyze-complete", "analyze-error"],
+      "notes": "Opens a binary for analysis. rizin session stays open for decompile_fn; module sources are dumped raw to output/analyzer/<module>/ first (hijack -> direct attach only, never a kernel driver)."
+    },
+    "analyze_export": {
+      "direction": "fire-and-forget",
+      "args": {
+        "limit": "number (max functions exported, 1..2000, default 500)"
+      },
+      "events_emitted": ["analyze-log", "analyze-progress", "analyze-complete", "analyze-error"],
+      "notes": "Batch-decompiles the open session's largest functions to .c files in <source dir>/decomp/. Cancellable between functions."
+    }
+  },
+
+  "events": {
+    "log": {
+      "type": "log",
+      "payload": {
+        "text": "string",
+        "level": "string (info | warn | error)",
+        "stream": "string (operation tag; set by api_server on streaming emits)"
+      },
+      "routing": "main.js routes by stream tag to <op>-log; level=error additionally to <op>-error",
+      "notes": "Primary text output channel."
+    },
+    "progress": {
+      "type": "progress",
+      "payload": {
+        "stage": "string",
+        "pct": "number (0-100)",
+        "stream": "string (operation tag)"
+      },
+      "routing": "main.js routes by stream tag to <op>-progress",
+      "notes": "Used by all four streaming operations."
+    },
+    "result": {
+      "type": "result",
+      "payload": {
+        "data": "object (operation-specific result shape; on failure {error, code})",
+        "stream": "string (operation tag)"
+      },
+      "routing": "main.js routes by stream tag to <op>-complete; on data.error also to <op>-error",
+      "notes": "Final payload for streaming operations."
+    },
+    "error": {
+      "type": "error",
+      "payload": {
+        "text": "string",
+        "level": "string",
+        "details": "object (optional)"
+      },
+      "notes": "Dedicated error event emitted on backend crash/interrupt by main.js."
+    }
+  },
+
+  "known_limitations": {
+    "no_auth_on_stdio_channel": "The stdio channel is trust-by-launch (parent spawns child). Version envelopes + command allow-list are enforced; full mutual attestation is out of scope.",
+    "cancel_is_cooperative": "cancel sets CANCEL_EVENT; operations abort at checkpoints (scanner chunks, between dump stages), not instantly mid-read.",
+    "streaming_has_no_timeout": "Only request-response commands have the 15s timeout in sendCommand.",
+    "result_shape_inconsistency": "Bridge returns {headers, json: string path, classes: count, fields: count, ...}. Many UI pages expect an in-memory .classes array of full objects. Consumers must load the json path themselves.",
+    "admin_elevation_is_all_or_nothing": "requireAdministrator in the manifest with limited runtime graceful handling.",
+    "dual_bundler_staleness_risk": "api_server.exe is a separate PyInstaller artifact; changes to gui_bridge / engines require rebuild + copy. Mitigated by build.ps1 + smoke gate."
+  },
+
+  "enforcement": {
+    "current_phase": "Enforced",
+    "validation_points": [
+      "api_server.py: process_command validates command against the allow-list before dispatch",
+      "main.js: sendCommand/sendStreamingCommand emit envelopes containing protocol_version",
+      "All error responses conform to error_shape above"
+    ],
+    "next_steps": "See plan.md for the council remediation history and verification gates."
+  },
+
+  "current_implementation_references": {
+    "preload_surface": "gui/electron/preload.js",
+    "main_command_and_streaming": "gui/electron/main.js (sendCommand, sendStreamingCommand, ipc handlers, stream routing)",
+    "python_dispatch": "api_server.py (process_command + tagged emit override)",
+    "bridge_command_handlers": "gui_bridge.py (run_dump, run_spoof*, run_read_memory, run_ac_detect, cancel_operation, KNOWN_GAME_EXES)",
+    "renderer_listeners": "gui/src/App.jsx + per-page usage"
+  }
+}

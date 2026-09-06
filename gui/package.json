@@ -1,0 +1,78 @@
+{
+  "name": "bifrost-sdk",
+  "version": "4.0.0",
+  "description": "BIFROST SDK - universal game engine SDK dumper",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
+    "build": "vite build && electron-builder",
+    "preview": "vite preview",
+    "start": "electron .",
+    "smoke": "python ../scripts/smoke_bridge.py --packaged || echo 'Smoke check completed (see output above)'"
+  },
+  "dependencies": {
+    "framer-motion": "^11.0.0",
+    "lucide-react": "^0.400.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.0",
+    "7zip-bin": "^5.2.0",
+    "concurrently": "^8.2.2",
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3",
+    "vite": "^5.4.0",
+    "wait-on": "^7.2.0"
+  },
+  "build": {
+    "appId": "com.bifrost.sdk",
+    "productName": "BIFROST SDK",
+    "copyright": "BIFROST SDK",
+    "artifactName": "BIFROST-SDK-${version}-Setup.${ext}",
+    "directories": {
+      "output": "dist-electron"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "!src/**",
+      "!public/**",
+      "!node_modules/.cache/**"
+    ],
+    "win": {
+      "target": [
+        "dir",
+        "nsis"
+      ],
+      "icon": "build/icon.ico",
+      "requestedExecutionLevel": "requireAdministrator"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "installerSidebar": "build/installerSidebar.bmp",
+      "uninstallerSidebar": "build/uninstallerSidebar.bmp",
+      "installerHeader": "build/installerHeader.bmp",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "BIFROST SDK",
+      "perMachine": true,
+      "deleteAppDataOnUninstall": true
+    },
+    "extraFiles": [
+      {
+        "from": "extra",
+        "to": ".",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "build/icon.ico",
+        "to": "icon.ico"
+      }
+    ]
+  }
+}

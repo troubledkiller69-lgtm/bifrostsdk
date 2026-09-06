@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+
+# Node / Electron
+gui/node_modules/
+gui/dist/
+gui/dist-electron/
+gui/BifrostSDK_GUI/
+
+# Staged runtime tree (built by build.ps1; sources live in drivers/ + config/)
+gui/extra/
+
+# Output
+output/
+*.exe
+!api_server.spec
+!gui_bridge.exe
+
+# Binary artifacts that belong to provisioning, not the tree
+*.sys
+*.bin
+*.dll
+*.pdb
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Logs
+*.log
+npm-debug.log*
+
+# Environment
+.env
+.env.local
+
+# Local agent config (machine-specific, not project docs)
+.claude/
+.grok/
+CLAUDE.md
+ANTIGRAVITY.md
+
+# Generated installer assets (regenerated from assets/source/ via scripts/generate_brand_assets.py)
+gui/build/*.bmp
+gui/build/*.png
+gui/build/*.ico

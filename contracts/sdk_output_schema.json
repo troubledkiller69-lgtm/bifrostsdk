@@ -1,0 +1,123 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://bifrost.local/sdk_output_schema.json",
+  "title": "BIFROST SDK Dump Output",
+  "description": "Engine-agnostic schema for the offsets.json artifact produced by every dumper (Unreal, Unity Mono, Unity IL2CPP, Source, Blizzard, AdobeAIR). Validates that the output is structurally well-formed regardless of whether a real game process was attached.",
+
+  "type": "object",
+  "required": ["_meta", "offsets"],
+  "additionalProperties": false,
+
+  "properties": {
+    "_meta": {
+      "type": "object",
+      "required": ["generator", "engine", "timestamp", "total_classes", "total_fields"],
+      "additionalProperties": true,
+      "properties": {
+        "generator": {
+          "type": "string",
+          "description": "Producer name. Always 'BIFROST SDK' today."
+        },
+        "engine": {
+          "type": "string",
+          "description": "Engine identifier. Examples: unreal5, unity_mono, unity_il2cpp, source, blizzard. Not enum-constrained so new engines don't break the schema."
+        },
+        "timestamp": {
+          "type": "string",
+          "description": "ISO-8601 or human timestamp when the dump was generated."
+        },
+        "total_classes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total_fields": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "verified_against_live_process": {
+          "type": "boolean",
+          "description": "False when produced from synthetic fixtures or other non-live sources. Frontend should warn when false. Optional today; will become required when Tier 2 fixtures land."
+        },
+        "bridge_version": {
+          "type": "string",
+          "description": "Optional bridge build SHA / timestamp for debugging stale-backend issues."
+        },
+        "dumper_version": {
+          "type": "string",
+          "description": "Optional dumper version stamp."
+        }
+      }
+    },
+
+    "offsets": {
+      "type": "object",
+      "description": "Map of class full-name -> class record. Class names are free-form strings; each value must conform to the class record schema below.",
+      "additionalProperties": { "$ref": "#/$defs/ClassRecord" }
+    }
+  },
+
+  "$defs": {
+    "ClassRecord": {
+      "type": "object",
+      "required": ["size", "super", "fields"],
+      "additionalProperties": false,
+      "properties": {
+        "size": {
+          "$ref": "#/$defs/HexOrInt",
+          "description": "Total class size. Hex string like '0x1A0' (the canonical format), or an integer for engines that emit raw numbers."
+        },
+        "super": {
+          "type": "string",
+          "description": "Parent class name. Empty string is allowed (root classes)."
+        },
+        "fields": {
+          "type": "object",
+          "description": "Map of field name -> field record.",
+          "additionalProperties": { "$ref": "#/$defs/FieldRecord" }
+        }
+      }
+    },
+
+    "FieldRecord": {
+      "type": "object",
+      "required": ["offset", "size", "type"],
+      "additionalProperties": false,
+      "properties": {
+        "offset": {
+          "$ref": "#/$defs/HexOrIntOrNull",
+          "description": "Field offset within its parent. Hex string '0x18' is canonical. Null is allowed for engines like AdobeAIR/AS3 where offsets are runtime-determined."
+        },
+        "size": {
+          "$ref": "#/$defs/IntOrNull",
+          "description": "Field size in bytes. Integer for native engines, null for AS3-style runtime layouts."
+        },
+        "type": {
+          "type": "string",
+          "description": "Engine-native type name (e.g. 'IntProperty' in Unreal, 'System.Int32' in Unity Mono, 'Number' in AS3)."
+        }
+      }
+    },
+
+    "HexOrInt": {
+      "oneOf": [
+        { "type": "string", "pattern": "^0[xX][0-9A-Fa-f]+$" },
+        { "type": "integer", "minimum": 0 }
+      ]
+    },
+
+    "HexOrIntOrNull": {
+      "oneOf": [
+        { "type": "string", "pattern": "^0[xX][0-9A-Fa-f]+$" },
+        { "type": "integer", "minimum": 0 },
+        { "type": "null" }
+      ]
+    },
+
+    "IntOrNull": {
+      "oneOf": [
+        { "type": "integer", "minimum": 0 },
+        { "type": "null" }
+      ]
+    }
+  }
+}
