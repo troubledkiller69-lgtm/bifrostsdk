@@ -68,7 +68,16 @@ class MemoryReader:
         # PEB+0x10 ALWAYS holds the main exe base — using it for other
         # modules poisons the cache with the wrong address. Only take this
         # path when the requested name matches the process executable.
-        exe_name = self._pm.process_base["name"].lower() if self._pm.process_base else ""
+        exe_name = ""
+        try:
+            pb = self._pm.process_base
+            # pymem returns a MODULEINFO ctypes struct here — its module
+            # name is the .name property, NOT ["name"] (subscripting the
+            # struct raised 'MODULEINFO' object is not subscriptable on
+            # every direct-attach module_base call).
+            exe_name = pb.name.lower() if pb else ""
+        except Exception:
+            exe_name = ""
         if exe_name and key in (exe_name, exe_name.replace(".exe", "")):
             try:
                 ntdll = ctypes.windll.ntdll
