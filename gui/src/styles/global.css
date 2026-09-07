@@ -1317,6 +1317,12 @@ html, body, #root {
   background: var(--accent-soft);
 }
 
+.asm-row:hover,
+.xref-row:hover {
+  background: var(--accent-soft);
+  cursor: pointer;
+}
+
 .hex-address {
   color: var(--text-ghost);
   width: 120px;

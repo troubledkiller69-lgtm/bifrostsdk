@@ -99,6 +99,7 @@ The decompiler half. Point it at a file, or dump a module from a live process (h
 - `analyze` — load + auto-analysis, returns the function list ranked by size
 - `decompile_fn` — decompile one address; results cache per session
 - `analyze_export` — batch-decompiles the top functions to `.c` under `<source>/decomp/`
+- **Address explorer** — hex+ascii dump, linear disassembly, and cross-references at any address (`analyzer_hexdump`, `analyzer_disasm_at`, `analyzer_xrefs`). Disasm is rizin-free iced-x86 (instant scrolling); xrefs are a real rizin `axtj` pass.
 
 Every operation is a one-shot rizin process (Windows can't drive rizin interactively over a pipe — see the engine docstring), so a hung decompile dies with its process, never the SDK. Bodies cache on the analyzer side, so repeat clicks are instant. Rizin lives in `gui/extra/rizin/`; when it's absent the probe reports it and `analyze` degrades to iced-x86 with a warning.
 

@@ -311,6 +311,113 @@ def _comment_header(addr: int) -> str:
     return f"// BIFROST decompile @ {addr:#x}\n"
 
 
+def _current_context() -> tuple:
+    """(file_path, base, session, engine) from CURRENT, no raises."""
+    with CURRENT["lock"]:
+        source = CURRENT["source"]
+        if source is None:
+            return (None, None, None, None)
+        return (
+            source.get("file"),
+            source.get("base"),
+            CURRENT["session"],
+            CURRENT["engine"],
+        )
+
+
+def hexdump_at(addr: int, size: int = 256) -> dict:
+    """Hex + ASCII rows for *size* bytes at *addr* in the open image.
+
+    Rows are [{addr, hex, ascii}] with 16 bytes each, IDA-hexdump style.
+    Works for any analyzed source — this is a plain file read, no rizin.
+    """
+    if not isinstance(addr, int) or addr <= 0:
+        return {"error": f"Invalid address: {addr}", "code": "BAD_ARGS"}
+    if not isinstance(size, int) or size <= 0 or size > 0x1000:
+        return {"error": "size must be 1..4096", "code": "BAD_ARGS"}
+    file_path, base, _session, _engine = _current_context()
+    if not file_path:
+        return {"error": "No analysis session open. Run an analyze job first.", "code": "NO_SESSION"}
+
+    from . import image_map
+
+    window = image_map.va_to_window(file_path, base, addr, size)
+    if not window.get("ok"):
+        return {"error": window.get("error", "mapping failed"), "code": "UNMAPPED"}
+    try:
+        with open(file_path, "rb") as f:
+            f.seek(window["offset"])
+            data = f.read(window["length"])
+    except OSError as exc:
+        return {"error": f"read failed: {exc}", "code": "READ_FAILED"}
+    if not data:
+        return {"error": "nothing to read at that address", "code": "READ_FAILED"}
+
+    rows = []
+    for i in range(0, len(data), 16):
+        chunk = data[i:i + 16]
+        hexpart = " ".join(f"{b:02x}" for b in chunk)
+        hexpart = hexpart.ljust(16 * 3 - 1) if i + 16 < len(data) else hexpart
+        ascii_part = "".join(chr(b) if 0x20 <= b < 0x7F else "." for b in chunk)
+        rows.append({
+            "addr": addr + i,
+            "hex": hexpart,
+            "ascii": ascii_part,
+        })
+    return {"addr": addr, "size": len(data), "arch": window["arch"], "rows": rows}
+
+
+def disasm_at(addr: int, size: int = 128) -> dict:
+    """Linear disassembly at *addr* in the open image (iced-x86).
+
+    Deliberately rizin-free — the explorer should answer in milliseconds
+    while scrolling, not in spawn seconds. Best-effort on junk bytes: the
+    decode stops at the first invalid instruction.
+    """
+    if not isinstance(addr, int) or addr <= 0:
+        return {"error": f"Invalid address: {addr}", "code": "BAD_ARGS"}
+    if not isinstance(size, int) or size <= 0 or size > 0x1000:
+        return {"error": "size must be 1..4096", "code": "BAD_ARGS"}
+    file_path, base, _session, _engine = _current_context()
+    if not file_path:
+        return {"error": "No analysis session open. Run an analyze job first.", "code": "NO_SESSION"}
+
+    from . import disasm, image_map
+
+    window = image_map.va_to_window(file_path, base, addr, size)
+    if not window.get("ok"):
+        return {"error": window.get("error", "mapping failed"), "code": "UNMAPPED"}
+    try:
+        with open(file_path, "rb") as f:
+            f.seek(window["offset"])
+            data = f.read(window["length"])
+    except OSError as exc:
+        return {"error": f"read failed: {exc}", "code": "READ_FAILED"}
+    if not data:
+        return {"error": "nothing to disassemble at that address", "code": "READ_FAILED"}
+    try:
+        lines = disasm.disasm_region(data, addr, arch=window["arch"])
+    except disasm.IcedError as exc:
+        return {"error": str(exc), "code": "DISASM_FAILED"}
+    return {"addr": addr, "arch": window["arch"], "lines": lines}
+
+
+def xrefs_at(addr: int) -> dict:
+    """Cross-references to *addr* — rizin axtj. Needs the rizin engine."""
+    if not isinstance(addr, int) or addr <= 0:
+        return {"error": f"Invalid address: {addr}", "code": "BAD_ARGS"}
+    file_path, _base, session, engine = _current_context()
+    if not file_path:
+        return {"error": "No analysis session open. Run an analyze job first.", "code": "NO_SESSION"}
+    if engine != "rizin-ghidra" or session is None:
+        return {"error": "xrefs need rizin (axtj). Re-analyze with rizin provisioned.", "code": "NO_RIZIN"}
+    try:
+        xrefs = session.xrefs(addr)
+    except Exception as exc:
+        return {"error": f"xref scan failed: {exc}", "code": "XREFS_FAILED"}
+    return {"addr": addr, "xrefs": xrefs}
+
+
 def export_functions(sink: LogSink, limit: int = _EXPORT_FN_CAP) -> dict:
     """Batch-decompile the top *limit* functions to .c files on disk."""
     with CURRENT["lock"]:

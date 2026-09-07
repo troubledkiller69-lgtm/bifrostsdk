@@ -3,7 +3,7 @@
     "name": "bifrost",
     "version": "1.3",
     "schema_version": 1,
-    "description": "BIFROST SDK Electron <-> Python backend IPC contract. Single source of truth for the desktop app bridge. v1.2 adds per-operation stream routing and cooperative cancellation. v1.3 adds the analyzer/decompiler surface (analyze, analyze_export, analyze_probe, decompile_fn).",
+    "description": "BIFROST SDK Electron <-> Python backend IPC contract. Single source of truth for the desktop app bridge. v1.2 adds per-operation stream routing and cooperative cancellation. v1.3 adds the analyzer/decompiler surface (analyze, analyze_export, analyze_probe, decompile_fn) and the address explorer (analyzer_hexdump, analyzer_disasm_at, analyzer_xrefs).",
     "last_updated": "2026-09",
     "status": "enforced (stream-tagged events + cancel command active)",
     "notes": [
@@ -101,6 +101,32 @@
       },
       "response": "{type:'result', data: {addr, code}} or {error, code: NO_SESSION | BAD_ARGS | DECOMPILE_FAILED}",
       "notes": "Decompiles one function from the open rizin session (pdgj). Bodies cached; sessions idle-close after 5 minutes."
+    },
+    "analyzer_hexdump": {
+      "direction": "request-response",
+      "args": {
+        "addr": "number (VA in the open image)",
+        "size": "number, 1..4096 (default 256)"
+      },
+      "response": "{type:'result', data: {addr, size, arch, rows:[{addr, hex, ascii}]}} or {error, code: NO_SESSION | BAD_ARGS | UNMAPPED | READ_FAILED}",
+      "notes": "IDA-style hex+ascii dump at an address in the open image. Plain file read, no rizin spawn."
+    },
+    "analyzer_disasm_at": {
+      "direction": "request-response",
+      "args": {
+        "addr": "number (VA in the open image)",
+        "size": "number, 1..4096 (default 128)"
+      },
+      "response": "{type:'result', data: {addr, arch, lines:[{address, bytes, text}]}} or {error, code: NO_SESSION | BAD_ARGS | UNMAPPED | DISASM_FAILED}",
+      "notes": "Linear disassembly at an address (iced-x86, rizin-free) for the address explorer."
+    },
+    "analyzer_xrefs": {
+      "direction": "request-response",
+      "args": {
+        "addr": "number (VA in the open image)"
+      },
+      "response": "{type:'result', data: {addr, xrefs:[{from, type, op}]}} or {error, code: NO_SESSION | BAD_ARGS | NO_RIZIN | XREFS_FAILED}",
+      "notes": "Cross-references to an address via rizin axtj. One-shot spawn, ~seconds."
     },
     "cancel": {
       "direction": "request-response",

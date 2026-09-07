@@ -16,7 +16,8 @@ Complete re-evaluation of the codebase. Brand consolidated to BIFROST SDK everyw
 
 ### Protocol (v1.3)
 
-- v1.3 adds the analyzer command surface (see above). The v1.2 changes below remain as shipped:
+- v1.3 adds the analyzer command surface (see above), including the address explorer: `analyzer_hexdump` (hex+ascii rows at a VA), `analyzer_disasm_at` (iced-x86 linear window, no rizin spawn) and `analyzer_xrefs` (rizin `axtj` one-shot). VA mapping covers raw module dumps (base-relative) and on-disk PEs (section table via pefile).
+- The v1.2 changes below remain as shipped:
 - `cancel` command added. `stop-dump` now actually reaches the backend; operations abort at checkpoints via a shared `CANCEL_EVENT` (pattern scanner chunks, between dump stages).
 - Validation-reject responses echo `_id` — previously they dropped the correlation id and every rejected command left the renderer hanging for the full timeout.
 - `ping` reports the live build stamp and `protocol_version`; version drift (2.0.0 vs 3.0.0) fixed.

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import AddressExplorer from './AddressExplorer';
 
 function fmtAddr(addr) {
   return '0x' + addr.toString(16).toUpperCase();
@@ -566,27 +567,33 @@ export default function AnalyzerPage() {
             </div>
           )}
 
-          {activeFn && (
-            <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 700, color: 'var(--accent)' }}>
-                  {fmtAddr(activeFn.addr)}
-                </span>
-                <span className="name" style={{ fontSize: 13 }}>{activeFn.name}</span>
-                <div style={{ flex: 1 }} />
-                {decompiling && <span style={{ fontSize: 11, color: 'var(--frost-muted)', fontFamily: 'var(--font-mono)' }}>decompiling...</span>}
-              </div>
-              {codeError ? (
-                <div className="log-console" style={{ maxHeight: 240, borderColor: 'var(--error)' }}>
-                  <p className="log-line error">{codeError}</p>
+              {activeFn && (
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 700, color: 'var(--accent)' }}>
+                      {fmtAddr(activeFn.addr)}
+                    </span>
+                    <span className="name" style={{ fontSize: 13 }}>{activeFn.name}</span>
+                    <div style={{ flex: 1 }} />
+                    {decompiling && <span style={{ fontSize: 11, color: 'var(--frost-muted)', fontFamily: 'var(--font-mono)' }}>decompiling...</span>}
+                  </div>
+                  {codeError ? (
+                    <div className="log-console" style={{ maxHeight: 240, borderColor: 'var(--error)' }}>
+                      <p className="log-line error">{codeError}</p>
+                    </div>
+                  ) : decompiled ? (
+                    <pre className="code-view">{decompiled.code}</pre>
+                  ) : !decompiling && (
+                    <div className="log-line dim" style={{ fontSize: 12 }}>Select a function to decompile it</div>
+                  )}
                 </div>
-              ) : decompiled ? (
-                <pre className="code-view">{decompiled.code}</pre>
-              ) : !decompiling && (
-                <div className="log-line dim" style={{ fontSize: 12 }}>Select a function to decompile it</div>
               )}
-            </div>
-          )}
+
+              <AddressExplorer
+                api={api}
+                enabled={!!result}
+                sessionOpen={!!result?.session}
+              />
         </div>
       </div>
     </>

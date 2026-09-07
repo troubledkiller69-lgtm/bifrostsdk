@@ -34,12 +34,15 @@ const ALLOWED_COMMANDS = [
   'list_processes',
   'test_webhook', 'spoof_info', 'spoof_restore', 'read_memory', 'ac_detect',
   'analyze_probe', 'decompile_fn',
+  'analyzer_hexdump', 'analyzer_disasm_at', 'analyzer_xrefs',
 ];
 
-// Request-response timeout per command. decompile_fn runs rz-ghidra pdgj on
-// the whole function — big bodies blow past the default 15s.
+// Request-response timeout per command. decompile_fn and analyzer_xrefs run
+// rizin one-shots (aaa + work) — big modules blow past the default 15s.
 const COMMAND_TIMEOUTS = {
   decompile_fn: 120000,
+  analyzer_xrefs: 120000,
+  analyzer_disasm_at: 30000,
 };
 const DEFAULT_COMMAND_TIMEOUT = 15000;
 

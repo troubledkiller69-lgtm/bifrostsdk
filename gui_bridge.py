@@ -963,6 +963,53 @@ def run_decompile_fn(args):
         emit({"type": "result", "data": {"error": str(e), "code": "DECOMPILE_FAILED"}})
 
 
+def run_hexdump_at(args):
+    """Hex+ascii rows at an address in the open image (address explorer)."""
+    try:
+        from core.decomp.analyzer import hexdump_at
+        addr = args.get("addr", 0)
+        if not isinstance(addr, int) or addr <= 0:
+            emit({"type": "result", "data": {"error": f"Invalid address: {addr}", "code": "BAD_ARGS"}})
+            return
+        size = args.get("size", 0)
+        kwargs = {"addr": addr}
+        if isinstance(size, int) and not isinstance(size, bool) and size > 0:
+            kwargs["size"] = size
+        emit({"type": "result", "data": hexdump_at(**kwargs)})
+    except Exception as e:
+        emit({"type": "result", "data": {"error": str(e), "code": "HEXDUMP_FAILED"}})
+
+
+def run_disasm_at(args):
+    """Linear disassembly at an address in the open image (explorer)."""
+    try:
+        from core.decomp.analyzer import disasm_at
+        addr = args.get("addr", 0)
+        if not isinstance(addr, int) or addr <= 0:
+            emit({"type": "result", "data": {"error": f"Invalid address: {addr}", "code": "BAD_ARGS"}})
+            return
+        size = args.get("size", 0)
+        kwargs = {"addr": addr}
+        if isinstance(size, int) and not isinstance(size, bool) and size > 0:
+            kwargs["size"] = size
+        emit({"type": "result", "data": disasm_at(**kwargs)})
+    except Exception as e:
+        emit({"type": "result", "data": {"error": str(e), "code": "DISASM_FAILED"}})
+
+
+def run_xrefs_at(args):
+    """Cross-references to an address (rizin axtj one-shot)."""
+    try:
+        from core.decomp.analyzer import xrefs_at
+        addr = args.get("addr", 0)
+        if not isinstance(addr, int) or addr <= 0:
+            emit({"type": "result", "data": {"error": f"Invalid address: {addr}", "code": "BAD_ARGS"}})
+            return
+        emit({"type": "result", "data": xrefs_at(addr=addr)})
+    except Exception as e:
+        emit({"type": "result", "data": {"error": str(e), "code": "XREFS_FAILED"}})
+
+
 def run_analyze_export(args):
     """Batch-decompile the open session's top functions to .c files."""
     from core.decomp.analyzer import export_functions

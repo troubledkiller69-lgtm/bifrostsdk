@@ -143,6 +143,40 @@ def parse_pdgj(payload) -> dict:
     return {"code": ""}
 
 
+def parse_axtj(payload) -> list[dict]:
+    """Normalize an `axtj @ addr` payload into [{from, type, op}, ...].
+
+    rizin xref entries carry the referencing instruction under `from`,
+    the kind of reference under `type` (CALL/JUMP/LEA/DATA/STRING/...)
+    and the raw operand under `op` (when the backend knows one).
+    """
+    if not payload:
+        return []
+    try:
+        if isinstance(payload, str):
+            entries = json.loads(payload)
+        else:
+            entries = payload
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(entries, list):
+        return []
+    out = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        src = entry.get("from", 0)
+        if not isinstance(src, int) or src <= 0:
+            continue
+        out.append({
+            "from": src,
+            "type": str(entry.get("type") or "UNKNOWN"),
+            "op": str(entry.get("op") or ""),
+        })
+    out.sort(key=lambda x: x["from"])
+    return out
+
+
 _MARKER = "BIFROST_MARKER_9f3a"
 
 
@@ -377,6 +411,15 @@ class RizinSession:
         payload = parse_pdgj(self._spawn(chain))
         payload["addr"] = addr
         return payload
+
+    def xrefs(self, addr: int) -> list[dict]:
+        """Cross-references to *addr* (code + data). Empty list = none."""
+        if self._runner is not None:
+            return parse_axtj(self.run(f"axtj @ {addr:#x}"))
+        chain = "; ".join(
+            p for p in (self._prelude(), f"aaa; axtj @ {addr:#x}") if p
+        )
+        return parse_axtj(self._spawn(chain))
 
     def batch_decompile(self, addrs: list[int]) -> dict[int, str]:
         """Decompile many functions with as few spawns as possible.

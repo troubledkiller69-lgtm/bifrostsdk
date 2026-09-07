@@ -119,6 +119,9 @@ contextBridge.exposeInMainWorld('bifrost', {
   stopAnalyzeExport: () => ipcRenderer.send('stop-analyze-export'),
   analyzeProbe: () => ipcRenderer.invoke('python-command', { command: 'analyze_probe', args: {} }),
   decompileFn: (addr) => ipcRenderer.invoke('python-command', { command: 'decompile_fn', args: { addr } }),
+  analyzerHexdump: (addr, size) => ipcRenderer.invoke('python-command', { command: 'analyzer_hexdump', args: { addr, size } }),
+  analyzerDisasmAt: (addr, size) => ipcRenderer.invoke('python-command', { command: 'analyzer_disasm_at', args: { addr, size } }),
+  analyzerXrefs: (addr) => ipcRenderer.invoke('python-command', { command: 'analyzer_xrefs', args: { addr } }),
   onAnalyzeLog: (cb) => {
     const handler = (_, data) => cb(data);
     ipcRenderer.on('analyze-log', handler);
