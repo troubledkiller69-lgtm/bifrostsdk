@@ -113,8 +113,36 @@ contextBridge.exposeInMainWorld('bifrost', {
     return () => ipcRenderer.removeListener('hunt-complete', handler);
   },
 
+  startAnalyze: (opts) => ipcRenderer.send('start-analyze', opts),
+  stopAnalyze: () => ipcRenderer.send('stop-analyze'),
+  startAnalyzeExport: (opts) => ipcRenderer.send('start-analyze-export', opts),
+  stopAnalyzeExport: () => ipcRenderer.send('stop-analyze-export'),
+  analyzeProbe: () => ipcRenderer.invoke('python-command', { command: 'analyze_probe', args: {} }),
+  decompileFn: (addr) => ipcRenderer.invoke('python-command', { command: 'decompile_fn', args: { addr } }),
+  onAnalyzeLog: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('analyze-log', handler);
+    return () => ipcRenderer.removeListener('analyze-log', handler);
+  },
+  onAnalyzeError: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('analyze-error', handler);
+    return () => ipcRenderer.removeListener('analyze-error', handler);
+  },
+  onAnalyzeProgress: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('analyze-progress', handler);
+    return () => ipcRenderer.removeListener('analyze-progress', handler);
+  },
+  onAnalyzeComplete: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('analyze-complete', handler);
+    return () => ipcRenderer.removeListener('analyze-complete', handler);
+  },
+
   saveFile: (opts) => ipcRenderer.invoke('save-file-dialog', opts),
   loadJsonFile: () => ipcRenderer.invoke('load-json-file'),
+  selectFilePath: () => ipcRenderer.invoke('select-file-path'),
   selectDirectory: () => ipcRenderer.invoke('select-directory'),
 
   removeAllListeners: (channel) => {
@@ -125,6 +153,7 @@ contextBridge.exposeInMainWorld('bifrost', {
       'spoof-progress', 'spoof-log', 'spoof-error', 'spoof-complete',
       'gen-progress', 'gen-log', 'gen-error', 'gen-complete',
       'hunt-progress', 'hunt-log', 'hunt-error', 'hunt-complete',
+      'analyze-progress', 'analyze-log', 'analyze-error', 'analyze-complete',
     ];
     if (ALLOWED_CHANNELS.includes(channel)) {
       ipcRenderer.removeAllListeners(channel);

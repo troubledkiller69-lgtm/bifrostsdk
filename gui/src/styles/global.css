@@ -1683,3 +1683,19 @@ html, body, #root {
   background-image: var(--gradient-glass);
 }
 
+/* ── Analyzer Page ──────────────────────────────────── */
+
+.code-view {
+  background: var(--console-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 14px 16px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  overflow: auto;
+  max-height: 560px;
+  white-space: pre;
+}
+

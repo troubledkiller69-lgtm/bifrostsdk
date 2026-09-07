@@ -12,16 +12,19 @@ let pendingRequests = {};
 let reqIdCounter = 1;
 
 // BIFROST IPC Protocol version (must stay in sync with contracts/bifrost_protocol.json)
-const BIFROST_PROTOCOL_VERSION = '1.2';
+const BIFROST_PROTOCOL_VERSION = '1.3';
 
 // Per-operation streaming channels. Events emitted by the backend carry a
 // `stream` tag (the command name), so each operation only reaches its own
 // channels — no cross-contamination between dump/spoof/gen/hunt.
+// analyze_export reuses the analyze-* channels (protocol events_emitted).
 const STREAMING_CHANNELS = {
   dump:   { log: 'dump-log',   error: 'dump-error',   progress: 'dump-progress',   complete: 'dump-complete' },
   spoof:  { log: 'spoof-log',  error: 'spoof-error',  progress: 'spoof-progress',  complete: 'spoof-complete' },
   generate: { log: 'gen-log',  error: 'gen-error',    progress: 'gen-progress',    complete: 'gen-complete' },
   hunt:   { log: 'hunt-log',   error: 'hunt-error',   progress: 'hunt-progress',   complete: 'hunt-complete' },
+  analyze: { log: 'analyze-log', error: 'analyze-error', progress: 'analyze-progress', complete: 'analyze-complete' },
+  analyze_export: { log: 'analyze-log', error: 'analyze-error', progress: 'analyze-progress', complete: 'analyze-complete' },
 };
 const ALL_STREAMING_CHANNELS = Object.values(STREAMING_CHANNELS).flatMap(s => Object.values(s));
 
@@ -30,7 +33,15 @@ const ALLOWED_COMMANDS = [
   'ping', 'bridge_info',
   'list_processes',
   'test_webhook', 'spoof_info', 'spoof_restore', 'read_memory', 'ac_detect',
+  'analyze_probe', 'decompile_fn',
 ];
+
+// Request-response timeout per command. decompile_fn runs rz-ghidra pdgj on
+// the whole function — big bodies blow past the default 15s.
+const COMMAND_TIMEOUTS = {
+  decompile_fn: 120000,
+};
+const DEFAULT_COMMAND_TIMEOUT = 15000;
 
 // Max content size for save-file-dialog (50MB)
 const MAX_SAVE_SIZE = 50 * 1024 * 1024;
@@ -200,12 +211,13 @@ async function sendCommand(command, args = {}) {
     }
     
     // Timeout
+    const timeoutMs = COMMAND_TIMEOUTS[command] || DEFAULT_COMMAND_TIMEOUT;
     setTimeout(() => {
       if (pendingRequests[reqId]) {
         resolve(makeBridgeError('TIMEOUT', 'Timeout waiting for bridge response'));
         delete pendingRequests[reqId];
       }
-    }, 15000);
+    }, timeoutMs);
   });
 }
 
@@ -275,6 +287,22 @@ ipcMain.on('start-hunt', (event, opts) => {
   sendStreamingCommand('hunt', opts);
 });
 
+ipcMain.on('start-analyze', (event, opts) => {
+  sendStreamingCommand('analyze', opts);
+});
+
+ipcMain.on('stop-analyze', () => {
+  cancelStreaming('analyze');
+});
+
+ipcMain.on('start-analyze-export', (event, opts) => {
+  sendStreamingCommand('analyze_export', opts);
+});
+
+ipcMain.on('stop-analyze-export', () => {
+  cancelStreaming('analyze_export');
+});
+
 // Save file dialog (for export) — with content size limit
 ipcMain.handle('save-file-dialog', async (event, { content, defaultName, filters }) => {
   if (typeof content === 'string' && content.length > MAX_SAVE_SIZE) {
@@ -305,6 +333,21 @@ ipcMain.handle('load-json-file', async () => {
     } catch {
       return { error: 'Invalid JSON' };
     }
+  }
+  return { cancelled: true };
+});
+
+// Open binary picker (for Analyzer source selection) — path only, no contents
+ipcMain.handle('select-file-path', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    filters: [
+      { name: 'Executables / Libraries', extensions: ['exe', 'dll', 'sys', 'bin', 'so'] },
+      { name: 'All Files', extensions: ['*'] },
+    ],
+    properties: ['openFile'],
+  });
+  if (!result.canceled && result.filePaths.length > 0) {
+    return { path: result.filePaths[0] };
   }
   return { cancelled: true };
 });

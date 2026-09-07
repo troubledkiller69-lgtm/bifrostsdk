@@ -16,6 +16,7 @@ It validates:
 - Core commands (ping, list_processes) succeed
 - Unknown commands are rejected with structured error_shape (code + message)
 - Basic streaming command acceptance (start-dump with dummy args)
+- Analyzer surface (analyze_probe result shape; analyze streams BAD_ARGS, not UNKNOWN_COMMAND)
 """
 
 from __future__ import annotations
@@ -222,6 +223,50 @@ def test_streaming_envelope_accepted(bridge: BridgeSmoke) -> bool:
     return True
 
 
+def test_analyze_probe(bridge: BridgeSmoke) -> bool:
+    log("Testing analyze_probe (decompiler engine availability)...")
+    rid = bridge.send("analyze_probe", {})
+    resp = bridge.wait_for_response(rid)
+    if resp.get("_id") != rid or resp.get("type") != "result":
+        log(f"analyze_probe unexpected envelope: {resp}", "fail")
+        return False
+    data = resp.get("data") or {}
+    rizin = data.get("rizin") or {}
+    iced = data.get("iced") or {}
+    if (isinstance(rizin.get("available"), bool)
+            and isinstance(iced.get("available"), bool)
+            and data.get("default_engine") in ("rizin-ghidra", "iced-x86")):
+        log(f"analyze_probe OK — rizin.available={rizin.get('available')} "
+            f"iced.available={iced.get('available')} "
+            f"default_engine={data.get('default_engine')}", "pass")
+        return True
+    log(f"analyze_probe unexpected data: {data}", "fail")
+    return False
+
+
+def test_analyze_streaming_bad_source(bridge: BridgeSmoke) -> bool:
+    log("Testing analyze streaming with invalid source (BAD_ARGS, not UNKNOWN_COMMAND)...")
+    bridge.send("analyze", {"source": {"type": "smoke-invalid"}})
+    deadline = time.time() + 8.0
+    while time.time() < deadline:
+        for msg in bridge.events:
+            if not isinstance(msg, dict):
+                continue
+            if msg.get("type") == "result" and msg.get("stream") == "analyze":
+                code = (msg.get("data") or {}).get("code")
+                if code == "BAD_ARGS":
+                    log("analyze streamed structured BAD_ARGS (command known, args rejected)", "pass")
+                    return True
+                log(f"analyze result unexpected code {code!r}: {msg}", "fail")
+                return False
+            if "UNKNOWN_COMMAND" in str(msg):
+                log(f"analyze wrongly rejected as unknown: {msg}", "fail")
+                return False
+        time.sleep(0.05)
+    log("No streamed result seen for analyze within timeout", "fail")
+    return False
+
+
 # --- Main --------------------------------------------------------------------
 
 def main():
@@ -241,6 +286,8 @@ def main():
             ("list_processes", test_list_processes),
             ("unknown_command_rejected", test_unknown_command_rejected),
             ("streaming_envelope", test_streaming_envelope_accepted),
+            ("analyze_probe", test_analyze_probe),
+            ("analyze_streaming_bad_source", test_analyze_streaming_bad_source),
         ]
 
         for name, fn in tests:

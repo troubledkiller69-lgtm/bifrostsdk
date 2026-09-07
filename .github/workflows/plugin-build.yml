@@ -1,0 +1,104 @@
+# rz-ghidra Windows plugin build (manual dispatch only).
+#
+# rizinorg ships NO prebuilt Windows plugin for rz-ghidra (source tarball
+# only, verified against the v0.9.0 release assets), so the pairing must be
+# compiled once per machine. This workflow does it on a GH runner and hands
+# the result back as an artifact, optionally attached to a draft release.
+#
+# The heavy lifting reuses tools/provision_rizin.ps1 from the repo - it
+# downloads rizin-windows-static-<ver>.zip, extracts it into gui/extra/rizin,
+# then builds rz-ghidra against it. This workflow only adds the MSVC dev
+# environment (the script assumes it, it probes vswhere but never inits env),
+# a pkg-config shim (rz-ghidra configures through CMake FindPkgConfig), and
+# artifact staging. Never auto-runs on push/PR.
+name: rz-ghidra plugin build (windows)
+
+on:
+  workflow_dispatch:
+    inputs:
+      rizin_version:
+        description: rizin version to provision against (must match ghidra)
+        required: false
+        default: '0.9.0'
+      ghidra_version:
+        description: rz-ghidra version to build
+        required: false
+        default: '0.9.0'
+      attach_release:
+        description: also attach the plugin zip to a draft release
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write # only exercised when attach_release is true (gh release create)
+
+jobs:
+  build:
+    name: build core_ghidra.dll
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Import MSVC x64 toolchain
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Ensure pkg-config (FindPkgConfig needs one of pkg-config/pkgconf)
+        shell: pwsh
+        run: |
+          if (-not (Get-Command pkg-config -ErrorAction SilentlyContinue)) {
+            if (-not (Get-Command pkgconf -ErrorAction SilentlyContinue)) {
+              choco install pkgconf -y --no-progress
+            }
+            $pkgconf = Get-Command pkgconf -ErrorAction SilentlyContinue
+            if ($pkgconf) {
+              Add-Content $env:GITHUB_ENV "PKG_CONFIG=$($pkgconf.Source)"
+            }
+          }
+
+      - name: Provision rizin and build rz-ghidra plugin
+        shell: pwsh
+        run: |
+          if ('${{ inputs.rizin_version }}' -ne '${{ inputs.ghidra_version }}') {
+            throw 'rizin and rz-ghidra release in lockstep - keep both versions equal'
+          }
+          ./tools/provision_rizin.ps1 -RizinVersion '${{ inputs.rizin_version }}' -GhidraVersion '${{ inputs.ghidra_version }}'
+          # lands core_ghidra.dll under gui/extra/rizin/plugins/
+
+      - name: Stage plugin dll and sleigh data
+        shell: pwsh
+        run: |
+          $rizin = Join-Path (Get-Location) 'gui/extra/rizin'
+          $dll = Join-Path $rizin 'plugins/core_ghidra.dll'
+          if (-not (Test-Path $dll)) { throw "core_ghidra.dll not found at $dll" }
+          $stage = Join-Path (Get-Location) 'bifrost-rzghidra-stage'
+          Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force $stage | Out-Null
+          Copy-Item $dll (Join-Path $stage 'core_ghidra.dll')
+          $sleigh = Get-ChildItem $rizin -Recurse -Directory -Filter 'sleigh' | Select-Object -First 1
+          if (-not $sleigh) { throw 'no sleigh data dir under the rizin tree' }
+          Copy-Item -Recurse $sleigh.FullName (Join-Path $stage 'sleigh')
+          Compress-Archive -Path (Join-Path $stage '*') -DestinationPath (Join-Path (Get-Location) 'bifrost-rzghidra-plugin-win64.zip') -Force
+          Get-ChildItem (Join-Path (Get-Location) 'bifrost-rzghidra-plugin-win64.zip') | Select-Object Name, Length
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rz-ghidra-plugin-win64
+          path: bifrost-rzghidra-stage/
+          if-no-files-found: error
+
+      - name: Attach to draft release
+        if: ${{ inputs.attach_release }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $zip = Join-Path (Get-Location) 'bifrost-rzghidra-plugin-win64.zip'
+          $tag = "bifrost-rzghidra-v${{ inputs.ghidra_version }}-win64-${{ github.run_id }}"
+          gh release create $tag $zip --draft `
+            --title "rz-ghidra v${{ inputs.ghidra_version }} Windows plugin (x64)" `
+            --notes "Manual CI build from run ${{ github.run_id }}. Pairing: rizin v${{ inputs.rizin_version }} + rz-ghidra v${{ inputs.ghidra_version }}."

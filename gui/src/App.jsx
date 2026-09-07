@@ -44,6 +44,7 @@ import { DriverHunterPage } from './components/DriverHunterPage';
 import DiffPage from './components/DiffPage';
 import MemoryViewerPage from './components/MemoryViewerPage';
 import ACMonitorPage from './components/ACMonitorPage';
+import AnalyzerPage from './components/AnalyzerPage';
 import SettingsPage from './components/SettingsPage';
 import ConfigEditorPage from './components/ConfigEditorPage';
 import BridgeStatus from './components/BridgeStatus';
@@ -196,7 +197,7 @@ export default function App() {
   useEffect(() => {
     const handler = (e) => {
       if (e.ctrlKey && !e.shiftKey && !e.altKey) {
-        const pages = ['engines', 'processes', 'dump', 'results', 'spoofer', 'boilerplate', 'hunter', 'diff', 'memory', 'acmonitor', 'config', 'settings'];
+        const pages = ['engines', 'processes', 'dump', 'results', 'spoofer', 'boilerplate', 'hunter', 'diff', 'memory', 'acmonitor', 'analyzer', 'config', 'settings'];
         const num = parseInt(e.key);
         if (num >= 1 && num <= pages.length) {
           e.preventDefault();
@@ -263,6 +264,8 @@ export default function App() {
         return <MemoryViewerPage />;
       case 'acmonitor':
         return <ACMonitorPage />;
+      case 'analyzer':
+        return <AnalyzerPage />;
       case 'config':
         return <ConfigEditorPage />;
       case 'settings':

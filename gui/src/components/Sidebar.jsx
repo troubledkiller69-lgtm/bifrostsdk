@@ -77,6 +77,13 @@ const NAV_ITEMS = [
       <circle cx="12" cy="16" r="0.5" fill="currentColor" />
     </svg>
   )},
+  { key: 'analyzer', label: 'Analyzer', icon: (
+    <svg className="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <rect x="6" y="4" width="4" height="6" rx="1" />
+      <rect x="14" y="14" width="4" height="6" rx="1" />
+      <path d="M6 20h4M14 10h4M6 14h2v6M14 4h2v6" />
+    </svg>
+  )},
   { key: 'config', label: 'Config Editor', icon: (
     <svg className="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
       <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
