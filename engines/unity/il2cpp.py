@@ -50,6 +50,7 @@ class IL2CPPDumper(BaseDumper):
         self._game_dir = game_dir
         self._ga_base: int = 0
         self._ga_size: int = 0
+        self._type_info_table: int | None = None
         self._metadata: bytes = b""
         self._metadata_version: int = 0
         self._strings: bytes = b""
@@ -237,33 +238,29 @@ class IL2CPPDumper(BaseDumper):
             self._log_error(f"Error parsing type definitions: {e}")
 
         # Read field definitions
-        # Field definitions are typically right after type definitions
-        # or at a separate offset in the header
+        # The field pair is a fixed header index (11), not "the pair after
+        # typeDefinitions" — that was the images table, which produced a
+        # nonsense field count (PG3D showed 423 fields for 21329 types).
         try:
-            # The field definitions offset varies by metadata version
-            # For version 29+, it's at a specific header offset
-            # We'll try to read it from the metadata
-            fd_offset_pos = cfg.header_type_definitions_offset + 8  # usually next pair
-            if fd_offset_pos + 8 <= len(meta):
-                fd_offset = struct.unpack_from("<i", meta, fd_offset_pos)[0]
-                fd_count = struct.unpack_from("<i", meta, fd_offset_pos + 4)[0]
-                fd_size = cfg.field_def_size
+            fd_offset = struct.unpack_from("<i", meta, cfg.header_field_definitions_offset)[0]
+            fd_count = struct.unpack_from("<i", meta, cfg.header_field_definitions_count)[0]
+            fd_size = cfg.field_def_size
 
-                num_fields = fd_count // fd_size if fd_size > 0 else 0
+            num_fields = fd_count // fd_size if fd_size > 0 else 0
 
-                for i in range(num_fields):
-                    off = fd_offset + i * fd_size
-                    if off + fd_size > len(meta):
-                        break
+            for i in range(num_fields):
+                off = fd_offset + i * fd_size
+                if off + fd_size > len(meta):
+                    break
 
-                    name_idx = struct.unpack_from("<i", meta, off + cfg.field_def_name_index)[0]
-                    type_idx = struct.unpack_from("<i", meta, off + cfg.field_def_type_index)[0]
+                name_idx = struct.unpack_from("<i", meta, off + cfg.field_def_name_index)[0]
+                type_idx = struct.unpack_from("<i", meta, off + cfg.field_def_type_index)[0]
 
-                    self._field_defs.append({
-                        "index": i,
-                        "name": self._read_metadata_string(name_idx),
-                        "type_index": type_idx,
-                    })
+                self._field_defs.append({
+                    "index": i,
+                    "name": self._read_metadata_string(name_idx),
+                    "type_index": type_idx,
+                })
 
         except Exception as e:
             self._log_error(f"Error parsing field definitions: {e}")
@@ -283,33 +280,55 @@ class IL2CPPDumper(BaseDumper):
 
     def _find_runtime_class(self, type_index: int) -> int:
         """
-        Find the runtime Il2CppClass* for a type definition index.
-        
-        GameAssembly.dll contains a global array:
-            Il2CppClass** s_TypeInfoTable
-        indexed by TypeDefinitionIndex.
-        """
-        # Pattern to find s_TypeInfoTable:
-        # Common approach: scan for the initialization routine
-        # For now, we use a known pattern
-        patterns = [
-            "48 8B 05 ?? ?? ?? ?? 48 8B 0C C8",  # MOV RAX, [s_TypeInfoTable]; MOV RCX, [RAX+RCX*8]
-            "4C 8B 05 ?? ?? ?? ?? 4D 8B 04 C0",
-        ]
+        Return the runtime Il2CppClass* for a type definition index.
 
-        for pat in patterns:
-            addr = self.scanner.find_address(
-                self.config.game_assembly_dll, pat
-            )
-            if addr:
-                try:
-                    table_addr = self.reader.read_ptr(addr)
+        GameAssembly.dll contains a global array (Il2CppClass** s_TypeInfoTable)
+        indexed by TypeDefinitionIndex. The table base is resolved ONCE per
+        dump — the old code re-scanned GameAssembly for the pattern on every
+        type, which stalled 21k-type dumps for minutes between progress
+        events. A miss means the patterns don't match this build; every
+        type falls back to metadata-only names instead of re-scanning.
+        """
+        if self._type_info_table is None:
+            patterns = [
+                # MOV RAX, [s_TypeInfoTable]; MOV RCX, [RAX+RCX*8]
+                "48 8B 05 ?? ?? ?? ?? 48 8B 0C C8",
+                "4C 8B 05 ?? ?? ?? ?? 4D 8B 04 C0",
+            ]
+            table_addr = 0
+            for pat in patterns:
+                addr = self.scanner.find_address(self.config.game_assembly_dll, pat)
+                if addr:
+                    try:
+                        table_addr = self.reader.read_ptr(addr) or 0
+                    except Exception:
+                        table_addr = 0
                     if table_addr:
-                        class_ptr = self.reader.read_ptr(table_addr + type_index * 8)
-                        return class_ptr
-                except Exception:
-                    continue
-        return 0
+                        break
+            self._type_info_table = table_addr
+            if table_addr:
+                self._update_progress(
+                    "dumping", f"Runtime type table at 0x{table_addr:X}", 30)
+            else:
+                self._log_error(
+                    "s_TypeInfoTable pattern not found; using metadata-only "
+                    "field names (offsets will need runtime resolution)")
+
+        if not self._type_info_table:
+            return 0
+        try:
+            class_ptr = self.reader.read_ptr(self._type_info_table + type_index * 8)
+        except Exception:
+            return 0
+        # Readable, kernel-space-excluding sanity gate — keeps bogus table
+        # entries from sending _read_runtime_fields off reading garbage.
+        if not class_ptr or class_ptr > 0x7FFFFFFFFFFF:
+            return 0
+        try:
+            self.reader.read_ptr(class_ptr)
+        except Exception:
+            return 0
+        return class_ptr
 
     def _read_runtime_fields(self, class_addr: int, field_count: int) -> list[SDKField]:
         """

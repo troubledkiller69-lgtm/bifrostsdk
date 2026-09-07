@@ -102,6 +102,10 @@ class IL2CPPConfig:
     header_string_offset: int = 0x18        # int32
     header_string_count: int = 0x1C         # int32
     header_string_literal_offset: int = 0x20
+    # Header (offset, count) pairs live at 8 + 8*index (two int32 sanity
+    # fields prefix the pair array). fields = index 11, typeDefinitions = 19.
+    header_field_definitions_offset: int = 0x60
+    header_field_definitions_count: int = 0x64
     header_type_definitions_offset: int = 0xA0  # varies per version
     header_type_definitions_count: int = 0xA4
 
