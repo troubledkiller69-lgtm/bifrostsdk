@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 
 function fmtAddr(addr) {
   return '0x' + addr.toString(16).toUpperCase();
@@ -15,7 +15,7 @@ function unwrapPayload(res) {
   return res && res.type === 'result' ? res.data : res;
 }
 
-export default function AddressExplorer({ api, enabled, sessionOpen }) {
+export default function AddressExplorer({ api, enabled, sessionOpen, jumpTarget }) {
   const [addrText, setAddrText] = useState('');
   const [busy, setBusy] = useState(false);
   const [current, setCurrent] = useState(null); // {addr}
@@ -24,6 +24,15 @@ export default function AddressExplorer({ api, enabled, sessionOpen }) {
   const [xrefs, setXrefs] = useState(null);
   const [err, setErr] = useState('');
   const [view, setView] = useState('hex'); // hex | disasm | xrefs
+
+  // External jump requests (e.g. a Strings row click) — fire on ts change.
+  useEffect(() => {
+    if (enabled && jumpTarget && jumpTarget.addr > 0) {
+      setAddrText(fmtAddr(jumpTarget.addr));
+      load(jumpTarget.addr, 'hex');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, jumpTarget && jumpTarget.ts]);
 
   const load = async (addr, showView) => {
     if (!api) return;

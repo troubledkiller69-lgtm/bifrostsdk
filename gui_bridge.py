@@ -1010,6 +1010,32 @@ def run_xrefs_at(args):
         emit({"type": "result", "data": {"error": str(e), "code": "XREFS_FAILED"}})
 
 
+def run_symbols(args):
+    """Full function name -> addr map for the open session."""
+    try:
+        from core.decomp.analyzer import symbols
+        emit({"type": "result", "data": symbols()})
+    except Exception as e:
+        emit({"type": "result", "data": {"error": str(e), "code": "SYMBOLS_FAILED"}})
+
+
+def run_strings(args):
+    """Whole-image strings scan (IDA strings window equivalent)."""
+    try:
+        from core.decomp.analyzer import strings_all
+        min_len = args.get("min_len", 6)
+        cap = args.get("cap", 2000)
+        if not isinstance(min_len, int) or min_len < 1 or min_len > 64:
+            emit({"type": "result", "data": {"error": "min_len must be 1..64", "code": "BAD_ARGS"}})
+            return
+        if not isinstance(cap, int) or cap < 1 or cap > 10000:
+            emit({"type": "result", "data": {"error": "cap must be 1..10000", "code": "BAD_ARGS"}})
+            return
+        emit({"type": "result", "data": strings_all(min_len=min_len, cap=cap)})
+    except Exception as e:
+        emit({"type": "result", "data": {"error": str(e), "code": "STRINGS_FAILED"}})
+
+
 def run_analyze_export(args):
     """Batch-decompile the open session's top functions to .c files."""
     from core.decomp.analyzer import export_functions

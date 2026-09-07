@@ -128,6 +128,21 @@
       "response": "{type:'result', data: {addr, xrefs:[{from, type, op}]}} or {error, code: NO_SESSION | BAD_ARGS | NO_RIZIN | XREFS_FAILED}",
       "notes": "Cross-references to an address via rizin axtj. One-shot spawn, ~seconds."
     },
+    "analyzer_symbols": {
+      "direction": "request-response",
+      "args": {},
+      "response": "{type:'result', data: {count, symbols: {<name>: <addr>}, engine}} or {error, code: NO_SESSION | SYMBOLS_FAILED}",
+      "notes": "Full function name -> addr map for the open session. Powers clickable function identifiers in decompiled C. Collected during analyze; lazy aflj refetch if the map was cleared."
+    },
+    "analyzer_strings": {
+      "direction": "request-response",
+      "args": {
+        "min_len": "number, 1..64 (default 6)",
+        "cap": "number, 1..10000 (default 2000)"
+      },
+      "response": "{type:'result', data: {count, min_len, strings:[{addr, offset, size, enc, text}]}} or {error, code: NO_SESSION | BAD_ARGS | UNMAPPED | READ_FAILED}",
+      "notes": "IDA strings-window equivalent: whole-image scan for ASCII + UTF-16LE runs, mapped to VAs. Pure file read, no rizin spawn."
+    },
     "cancel": {
       "direction": "request-response",
       "args": {

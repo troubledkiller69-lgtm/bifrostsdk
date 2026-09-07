@@ -69,28 +69,6 @@ contextBridge.exposeInMainWorld('bifrost', {
     return () => ipcRenderer.removeListener('spoof-complete', handler);
   },
 
-  startGeneration: (opts) => ipcRenderer.send('start-generation', opts),
-  onGenLog: (cb) => {
-    const handler = (_, data) => cb(data);
-    ipcRenderer.on('gen-log', handler);
-    return () => ipcRenderer.removeListener('gen-log', handler);
-  },
-  onGenError: (cb) => {
-    const handler = (_, data) => cb(data);
-    ipcRenderer.on('gen-error', handler);
-    return () => ipcRenderer.removeListener('gen-error', handler);
-  },
-  onGenProgress: (cb) => {
-    const handler = (_, data) => cb(data);
-    ipcRenderer.on('gen-progress', handler);
-    return () => ipcRenderer.removeListener('gen-progress', handler);
-  },
-  onGenComplete: (cb) => {
-    const handler = (_, data) => cb(data);
-    ipcRenderer.on('gen-complete', handler);
-    return () => ipcRenderer.removeListener('gen-complete', handler);
-  },
-
   startHunt: (opts) => ipcRenderer.send('start-hunt', opts),
   onHuntLog: (cb) => {
     const handler = (_, data) => cb(data);
@@ -122,6 +100,8 @@ contextBridge.exposeInMainWorld('bifrost', {
   analyzerHexdump: (addr, size) => ipcRenderer.invoke('python-command', { command: 'analyzer_hexdump', args: { addr, size } }),
   analyzerDisasmAt: (addr, size) => ipcRenderer.invoke('python-command', { command: 'analyzer_disasm_at', args: { addr, size } }),
   analyzerXrefs: (addr) => ipcRenderer.invoke('python-command', { command: 'analyzer_xrefs', args: { addr } }),
+  analyzerSymbols: () => ipcRenderer.invoke('python-command', { command: 'analyzer_symbols', args: {} }),
+  analyzerStrings: (minLen, cap) => ipcRenderer.invoke('python-command', { command: 'analyzer_strings', args: { min_len: minLen, cap } }),
   onAnalyzeLog: (cb) => {
     const handler = (_, data) => cb(data);
     ipcRenderer.on('analyze-log', handler);
@@ -146,7 +126,6 @@ contextBridge.exposeInMainWorld('bifrost', {
   saveFile: (opts) => ipcRenderer.invoke('save-file-dialog', opts),
   loadJsonFile: () => ipcRenderer.invoke('load-json-file'),
   selectFilePath: () => ipcRenderer.invoke('select-file-path'),
-  selectDirectory: () => ipcRenderer.invoke('select-directory'),
 
   removeAllListeners: (channel) => {
     // Restrict to known streaming channels only — prevents renderer from
@@ -154,7 +133,6 @@ contextBridge.exposeInMainWorld('bifrost', {
     const ALLOWED_CHANNELS = [
       'dump-progress', 'dump-log', 'dump-error', 'dump-complete',
       'spoof-progress', 'spoof-log', 'spoof-error', 'spoof-complete',
-      'gen-progress', 'gen-log', 'gen-error', 'gen-complete',
       'hunt-progress', 'hunt-log', 'hunt-error', 'hunt-complete',
       'analyze-progress', 'analyze-log', 'analyze-error', 'analyze-complete',
     ];

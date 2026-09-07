@@ -39,7 +39,6 @@ import ProcessesPage from './components/ProcessesPage';
 import DumpPage from './components/DumpPage';
 import ResultsPage from './components/ResultsPage';
 import SpooferPage from './components/SpooferPage';
-import BoilerplatePage from './components/BoilerplatePage';
 import { DriverHunterPage } from './components/DriverHunterPage';
 import DiffPage from './components/DiffPage';
 import MemoryViewerPage from './components/MemoryViewerPage';
@@ -198,7 +197,7 @@ export default function App() {
   useEffect(() => {
     const handler = (e) => {
       if (e.ctrlKey && !e.shiftKey && !e.altKey) {
-        const pages = ['engines', 'processes', 'dump', 'results', 'spoofer', 'boilerplate', 'hunter', 'diff', 'memory', 'acmonitor', 'analyzer', 'config', 'settings'];
+        const pages = ['engines', 'processes', 'dump', 'results', 'spoofer', 'hunter', 'diff', 'memory', 'acmonitor', 'analyzer', 'config', 'settings'];
         const num = parseInt(e.key);
         if (num >= 1 && num <= pages.length) {
           e.preventDefault();
@@ -255,8 +254,6 @@ export default function App() {
         return <ResultsPage data={dumpResults} setPage={setPage} />;
       case 'spoofer':
         return <SpooferPage />;
-      case 'boilerplate':
-        return <BoilerplatePage dumpResults={dumpResults} />;
       case 'hunter':
         return <DriverHunterPage />;
       case 'diff':

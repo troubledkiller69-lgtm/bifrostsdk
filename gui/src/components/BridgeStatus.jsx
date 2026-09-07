@@ -57,7 +57,6 @@ export default function BridgeStatus() {
     };
     bind(api.onDumpError);
     bind(api.onSpoofError);
-    bind(api.onGenError);
     bind(api.onHuntError);
     bind(api.onAnalyzeError);
 

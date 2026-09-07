@@ -61,6 +61,32 @@ def _arch_for_machine(machine: int | None) -> str:
     return "x86_64"  # unknown/ELF/etc — assume x64, caller sees garbage if wrong
 
 
+def scan_windows(file_path: str, base: int | None) -> list[tuple[int, int, int]]:
+    """Whole-image window list for file scans.
+
+    Returns [(file_offset, va, length), ...] covering the readable image:
+    a raw module dump (base set) is one linear window; an on-disk PE is
+    one window per raw section. Empty list = unsupported image.
+    """
+    try:
+        size = os.path.getsize(file_path)
+    except OSError:
+        return []
+    if base:
+        return [(0, base, size)]
+    pe_map = _load_pe_map(file_path)
+    if pe_map is None:
+        return []
+    _image_base, _machine, sections = pe_map
+    windows = []
+    for sva, fileoff, vsize in sections:
+        raw_room = max(0, size - fileoff)
+        length = min(vsize, raw_room)
+        if length > 0:
+            windows.append((fileoff, sva, length))
+    return windows
+
+
 def va_to_window(file_path: str, base: int | None, va: int, length: int) -> dict:
     """Map a VA to a readable file window of *length* bytes.
 

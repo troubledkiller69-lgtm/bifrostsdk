@@ -16,12 +16,11 @@ const BIFROST_PROTOCOL_VERSION = '1.3';
 
 // Per-operation streaming channels. Events emitted by the backend carry a
 // `stream` tag (the command name), so each operation only reaches its own
-// channels — no cross-contamination between dump/spoof/gen/hunt.
+// channels — no cross-contamination between dump/spoof/hunt/analyze.
 // analyze_export reuses the analyze-* channels (protocol events_emitted).
 const STREAMING_CHANNELS = {
   dump:   { log: 'dump-log',   error: 'dump-error',   progress: 'dump-progress',   complete: 'dump-complete' },
   spoof:  { log: 'spoof-log',  error: 'spoof-error',  progress: 'spoof-progress',  complete: 'spoof-complete' },
-  generate: { log: 'gen-log',  error: 'gen-error',    progress: 'gen-progress',    complete: 'gen-complete' },
   hunt:   { log: 'hunt-log',   error: 'hunt-error',   progress: 'hunt-progress',   complete: 'hunt-complete' },
   analyze: { log: 'analyze-log', error: 'analyze-error', progress: 'analyze-progress', complete: 'analyze-complete' },
   analyze_export: { log: 'analyze-log', error: 'analyze-error', progress: 'analyze-progress', complete: 'analyze-complete' },
@@ -35,6 +34,7 @@ const ALLOWED_COMMANDS = [
   'test_webhook', 'spoof_info', 'spoof_restore', 'read_memory', 'ac_detect',
   'analyze_probe', 'decompile_fn',
   'analyzer_hexdump', 'analyzer_disasm_at', 'analyzer_xrefs',
+  'analyzer_symbols', 'analyzer_strings',
 ];
 
 // Request-response timeout per command. decompile_fn and analyzer_xrefs run
@@ -284,10 +284,6 @@ ipcMain.on('start-spoofing', (event, opts) => {
   sendStreamingCommand('spoof', opts);
 });
 
-ipcMain.on('start-generation', (event, opts) => {
-  sendStreamingCommand('generate', opts);
-});
-
 ipcMain.on('start-hunt', (event, opts) => {
   sendStreamingCommand('hunt', opts);
 });
@@ -350,17 +346,6 @@ ipcMain.handle('select-file-path', async () => {
       { name: 'All Files', extensions: ['*'] },
     ],
     properties: ['openFile'],
-  });
-  if (!result.canceled && result.filePaths.length > 0) {
-    return { path: result.filePaths[0] };
-  }
-  return { cancelled: true };
-});
-
-// Select directory dialog (for output path in Settings/Boilerplate)
-ipcMain.handle('select-directory', async () => {
-  const result = await dialog.showOpenDialog(mainWindow, {
-    properties: ['openDirectory'],
   });
   if (!result.canceled && result.filePaths.length > 0) {
     return { path: result.filePaths[0] };

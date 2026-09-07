@@ -17,7 +17,19 @@ from typing import Any, Dict, List, Tuple
 
 PROTOCOL_PATH = Path(__file__).parent / "bifrost_protocol.json"
 
-# Auto-derive known commands from protocol JSON to prevent drift (council T5/T6 fix)
+
+def load_protocol() -> dict[str, Any]:
+    """Load and return the protocol document. Raises on missing/invalid JSON."""
+    if not PROTOCOL_PATH.exists():
+        raise FileNotFoundError(f"Protocol file not found: {PROTOCOL_PATH}")
+    with PROTOCOL_PATH.open(encoding="utf-8") as f:
+        return json.load(f)
+
+
+# Auto-derive known commands from protocol JSON to prevent drift (council T5/T6 fix).
+# Defined after load_protocol — this call used to NameError and silently fall
+# back to the hardcoded lists, which kept the drift tests passing against the
+# fallback instead of the contract.
 def _load_command_lists() -> Tuple[List[str], List[str]]:
     """Load command names from bifrost_protocol.json. Falls back to hardcoded if file missing."""
     try:
@@ -36,14 +48,6 @@ def _load_command_lists() -> Tuple[List[str], List[str]]:
         )
 
 KNOWN_COMMANDS, KNOWN_STREAMING = _load_command_lists()
-
-
-def load_protocol() -> dict[str, Any]:
-    """Load and return the protocol document. Raises on missing/invalid JSON."""
-    if not PROTOCOL_PATH.exists():
-        raise FileNotFoundError(f"Protocol file not found: {PROTOCOL_PATH}")
-    with PROTOCOL_PATH.open(encoding="utf-8") as f:
-        return json.load(f)
 
 
 def validate_protocol_document() -> Tuple[bool, str]:

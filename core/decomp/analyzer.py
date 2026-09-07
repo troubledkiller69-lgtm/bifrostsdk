@@ -37,6 +37,7 @@ CURRENT = {
     "source": None,           # dict describing what was loaded
     "engine": None,           # 'rizin-ghidra' | 'iced-x86'
     "cache": {},              # addr(int) -> {"code","name"}
+    "symbols": {},            # name(str) -> addr(int) — full binary fn map
     "lock": threading.Lock(),
 }
 
@@ -73,6 +74,7 @@ def _close_current():
         CURRENT["source"] = None
         CURRENT["engine"] = None
         CURRENT["cache"] = {}
+        CURRENT["symbols"] = {}
         if session is not None:
             try:
                 session.close()
@@ -247,6 +249,13 @@ def _analyze_rizin(file_path: str, extra: dict, sink: LogSink, limit: int) -> di
     sink.progress("Enumerating functions", 45)
     functions = session.functions()
     sink.log(f"analysis found {len(functions)} functions")
+    with CURRENT["lock"]:
+        # Full name map for clickable identifiers in decompiled bodies.
+        # The GUI only receives `trimmed` below; this keeps every name
+        # resolvable so any sub_140001000 in the C text can become a link.
+        CURRENT["symbols"] = {
+            f["name"]: f["addr"] for f in functions if f.get("name")
+        }
 
     # Keep the useful ones: named or big enough to matter, biggest first.
     named = [f for f in functions if f["name"]]
@@ -418,6 +427,125 @@ def xrefs_at(addr: int) -> dict:
     return {"addr": addr, "xrefs": xrefs}
 
 
+def symbols() -> dict:
+    """Full name -> addr map for the open session.
+
+    Populated during analyze from the complete rizin function list (the
+    GUI gets a trimmed view, this is the whole binary). Used to turn
+    function identifiers in decompiled C into clickable jumps. Lazy
+    fallback refetches aflj if the map is empty but a session exists.
+    """
+    with CURRENT["lock"]:
+        session = CURRENT["session"]
+        source = CURRENT["source"]
+        engine = CURRENT["engine"]
+        if session is None or source is None:
+            return {"error": "No analysis session open. Run an analyze job first.", "code": "NO_SESSION"}
+        symbols_map = dict(CURRENT["symbols"])
+    if not symbols_map and engine == "rizin-ghidra":
+        try:
+            functions = session.functions()
+            symbols_map = {f["name"]: f["addr"] for f in functions if f.get("name")}
+            with CURRENT["lock"]:
+                CURRENT["symbols"] = dict(symbols_map)
+        except Exception as exc:
+            return {"error": f"symbol scan failed: {exc}", "code": "SYMBOLS_FAILED"}
+    return {"count": len(symbols_map), "symbols": symbols_map, "engine": engine}
+
+
+def strings_all(min_len: int = 6, cap: int = 2000) -> dict:
+    """IDA-style strings table scan across the whole open image.
+
+    Pure file scan (no rizin spawn) — ASCII runs plus UTF-16LE, mapped to
+    VAs through the image section map so every hit can feed the address
+    explorer. `cap` bounds the returned rows; scanning stops at it.
+    """
+    if not isinstance(min_len, int) or min_len < 1 or min_len > 64:
+        return {"error": "min_len must be 1..64", "code": "BAD_ARGS"}
+    if not isinstance(cap, int) or cap < 1 or cap > 10000:
+        return {"error": "cap must be 1..10000", "code": "BAD_ARGS"}
+    with CURRENT["lock"]:
+        source = CURRENT["source"]
+        if source is None:
+            return {"error": "No analysis session open. Run an analyze job first.", "code": "NO_SESSION"}
+        file_path = source.get("file")
+        base = source.get("base")
+    if not file_path or not os.path.isfile(file_path):
+        return {"error": "analysis file is missing from disk", "code": "NO_SESSION"}
+
+    from . import image_map
+    import re
+
+    windows = image_map.scan_windows(file_path, base)
+    if not windows:
+        return {"error": "unsupported image: no section map (raw dump needs a base)", "code": "UNMAPPED"}
+
+    ascii_re = re.compile(rb"[\x20-\x7e]{%d,}" % min_len)
+    wide_re = re.compile(rb"(?:[\x20-\x7e]\x00){%d,}" % min_len)
+
+    # Windows share the cap fairly. Scanned in address order, .text always
+    # comes first and pure-code byte runs would otherwise crowd out the
+    # actual strings sitting in .rdata/.data.
+    per_window = max(1, cap // max(1, len(windows)))
+
+    def junk_ascii(text: str) -> bool:
+        # Code-noise runs are uniform byte garbage without word shape —
+        # 't!f;T$(w' and 'SUVWATAUAVAWH' are opcode accidents. Keep runs
+        # with a real separator (space/path/dot/underscore) or lowercase
+        # vowels, which byte noise almost never spells ('kernel32',
+        # 'GetFileType'). Long runs stay regardless.
+        if len(text) >= 20:
+            return False
+        if any(c in text for c in " /\\:._"):
+            return False
+        return not any(c in text for c in "aeiouy")
+
+    rows = []
+    try:
+        with open(file_path, "rb") as f:
+            for off_start, va_start, length in windows:
+                window_rows = 0
+                f.seek(off_start)
+                data = f.read(length)
+                # ASCII runs
+                for m in ascii_re.finditer(data):
+                    text = m.group().decode("latin-1")
+                    if junk_ascii(text):
+                        continue
+                    rows.append({
+                        "addr": va_start + m.start(),
+                        "offset": off_start + m.start(),
+                        "size": m.end() - m.start(),
+                        "enc": "ascii",
+                        "text": text,
+                    })
+                    window_rows += 1
+                    if window_rows >= per_window:
+                        break
+                if len(rows) >= cap:
+                    break
+                # UTF-16LE runs (skip where an ASCII twin already covered it)
+                for m in wide_re.finditer(data):
+                    text = m.group().decode("utf-16-le", errors="ignore")
+                    rows.append({
+                        "addr": va_start + m.start(),
+                        "offset": off_start + m.start(),
+                        "size": m.end() - m.start(),
+                        "enc": "wide",
+                        "text": text,
+                    })
+                    window_rows += 1
+                    if window_rows >= per_window:
+                        break
+                if len(rows) >= cap:
+                    break
+    except OSError as exc:
+        return {"error": f"read failed: {exc}", "code": "READ_FAILED"}
+
+    rows.sort(key=lambda r: r["addr"])
+    return {"count": len(rows), "min_len": min_len, "strings": rows}
+
+
 def export_functions(sink: LogSink, limit: int = _EXPORT_FN_CAP) -> dict:
     """Batch-decompile the top *limit* functions to .c files on disk."""
     with CURRENT["lock"]:
@@ -518,6 +646,7 @@ def _idle_close_guard():
             CURRENT["session"] = None
             CURRENT["source"] = None
             CURRENT["cache"] = {}
+            CURRENT["symbols"] = {}
 
 
 class _Cancelled(RuntimeError):

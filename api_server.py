@@ -11,7 +11,7 @@ from gui_bridge import (
     run_spoof_restore, run_generate, run_hunt, run_read_memory, run_ac_detect,
     run_test_webhook, cancel_operation,
     run_analyze_probe, run_analyze, run_decompile_fn, run_analyze_export,
-    run_hexdump_at, run_disasm_at, run_xrefs_at,
+    run_hexdump_at, run_disasm_at, run_xrefs_at, run_symbols, run_strings,
 )
 
 # Council remediation: protocol enforcement (Cluster 1)
@@ -166,6 +166,12 @@ def process_command(cmd_line):
             response = _pick_result(captured)
         elif command == 'analyzer_xrefs':
             run_xrefs_at(args)
+            response = _pick_result(captured)
+        elif command == 'analyzer_symbols':
+            run_symbols(args)
+            response = _pick_result(captured)
+        elif command == 'analyzer_strings':
+            run_strings(args)
             response = _pick_result(captured)
         elif command == 'ping':
             response = {

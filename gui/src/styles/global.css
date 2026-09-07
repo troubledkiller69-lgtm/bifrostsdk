@@ -1598,6 +1598,27 @@ html, body, #root {
   white-space: pre;
 }
 
+.code-view .code-line {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.code-link {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: var(--accent);
+  cursor: pointer;
+  border-radius: 2px;
+}
+
+.code-link:hover {
+  background: var(--accent-soft);
+  text-decoration: underline;
+}
+
 /* ── Tab strip (page-level secondary navigation) ─────── */
 
 .tab-strip {

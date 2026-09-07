@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import AddressExplorer from './AddressExplorer';
 
 function fmtAddr(addr) {
@@ -11,6 +11,52 @@ function unwrapPayload(res) {
 
 function baseName(p) {
   return String(p || '').split(/[\\/]/).pop() || p || '';
+}
+
+// Tokenize decompiled C and wrap known function identifiers + hex
+// constants that resolve to functions in clickable spans. Non-matching
+// text stays plain — the mono block keeps its copyable shape.
+function CodeBlock({ code, symbols, addrName, onJump }) {
+  const hasLinks = symbols && addrName && (Object.keys(symbols).length > 0);
+  if (!hasLinks) return <pre className="code-view">{code}</pre>;
+
+  const tokenRe = /[A-Za-z_$][A-Za-z0-9_$.~]*|0x[0-9a-fA-F]+/g;
+  const lines = code.split('\n');
+  return (
+    <div className="code-view">
+      {lines.map((line, i) => {
+        const parts = [];
+        let last = 0;
+        let m;
+        tokenRe.lastIndex = 0;
+        while ((m = tokenRe.exec(line)) !== null) {
+          const token = m[0];
+          let target = null;
+          if (symbols[token] !== undefined) target = symbols[token];
+          else if (/^0x/i.test(token)) {
+            const n = parseInt(token, 16);
+            if (addrName[n]) target = n;
+          }
+          if (target) {
+            if (m.index > last) parts.push(line.slice(last, m.index));
+            parts.push(
+              <button
+                key={`${i}-${m.index}`}
+                className="code-link"
+                title={`Jump to ${addrName[target] || token}`}
+                onClick={(e) => { e.stopPropagation(); onJump(token, target); }}
+              >
+                {token}
+              </button>
+            );
+            last = m.index + token.length;
+          }
+        }
+        if (last < line.length) parts.push(line.slice(last));
+        return <div key={i} className="code-line">{parts}</div>;
+      })}
+    </div>
+  );
 }
 
 export default function AnalyzerPage() {
@@ -31,6 +77,13 @@ export default function AnalyzerPage() {
   const [decompiling, setDecompiling] = useState(false);
   const [decompiled, setDecompiled] = useState(null);
   const [codeError, setCodeError] = useState('');
+  const [decompTarget, setDecompTarget] = useState(null); // {addr, name} from list OR identifier link
+  const [symbols, setSymbols] = useState({}); // name -> addr (full binary)
+  const [strings, setStrings] = useState(null); // strings table rows
+  const [stringsLoading, setStringsLoading] = useState(false);
+  const [stringsError, setStringsError] = useState('');
+  const [stringFilter, setStringFilter] = useState('');
+  const [explorerTarget, setExplorerTarget] = useState(null); // {addr, ts}
 
   const consoleEndRef = useRef(null);
   const api = window.bifrost;
@@ -121,6 +174,8 @@ export default function AnalyzerPage() {
       setActiveAddr(null);
       setDecompiled(null);
       setCodeError('');
+      setDecompTarget(null);
+      setSymbols({});
       (payload.warnings || []).forEach(w => {
         setLogs(prev => [...prev.slice(-300), {
           time: new Date().toLocaleTimeString(),
@@ -133,6 +188,7 @@ export default function AnalyzerPage() {
         text: `Analysis complete — ${payload.functions ? payload.functions.length : 0} functions listed`,
         level: 'success'
       }]);
+      if (payload.session) refreshSymbolsAndStrings();
     });
 
     return () => {
@@ -145,6 +201,31 @@ export default function AnalyzerPage() {
 
   const addLog = (text, level = 'info') => {
     setLogs(prev => [...prev.slice(-300), { time: new Date().toLocaleTimeString(), text, level }]);
+  };
+
+  const fetchStrings = (minLen = 6) => {
+    if (!api) return;
+    setStringsLoading(true);
+    setStringsError('');
+    api.analyzerStrings(minLen, 2000)
+      .then((r) => {
+        const p = unwrapPayload(r);
+        if (p?.error) { setStringsError(p.code ? `${p.code}: ${p.error}` : p.error); setStrings(null); }
+        else setStrings(Array.isArray(p?.strings) ? p.strings : []);
+      })
+      .catch((e) => { setStringsError(e?.message || String(e)); setStrings(null); })
+      .finally(() => setStringsLoading(false));
+  };
+
+  const refreshSymbolsAndStrings = () => {
+    if (!api) return;
+    api.analyzerSymbols()
+      .then((r) => {
+        const p = unwrapPayload(r);
+        if (p && !p.error && p.symbols) setSymbols(p.symbols);
+      })
+      .catch(() => {});
+    fetchStrings();
   };
 
   const handleBrowse = async () => {
@@ -174,6 +255,10 @@ export default function AnalyzerPage() {
     setDecompiled(null);
     setCodeError('');
     setActiveAddr(null);
+    setDecompTarget(null);
+    setSymbols({});
+    setStrings(null);
+    setStringsError('');
     setProgress({ stage: 'Starting', pct: 0 });
     setRunning('analyze');
     addLog(`Analyzing ${sourceType === 'module' ? `${moduleName.trim()} (PID ${parseInt(modulePid, 10)})` : filePath}`);
@@ -198,9 +283,10 @@ export default function AnalyzerPage() {
     api.startAnalyzeExport({ limit: lim });
   };
 
-  const handleRowClick = async (fn) => {
+  const doDecompile = async (addr, name) => {
     if (!api || decompiling) return;
-    setActiveAddr(fn.addr);
+    setActiveAddr(addr);
+    setDecompTarget({ addr, name: name || null });
     setCodeError('');
     if (!result?.session) {
       setDecompiled(null);
@@ -210,7 +296,7 @@ export default function AnalyzerPage() {
     setDecompiling(true);
     setDecompiled(null);
     try {
-      const r = await api.decompileFn(fn.addr);
+      const r = await api.decompileFn(addr);
       const payload = unwrapPayload(r);
       if (payload?.error) {
         setCodeError(payload.code ? `${payload.code}: ${payload.error}` : payload.error);
@@ -223,9 +309,24 @@ export default function AnalyzerPage() {
     setDecompiling(false);
   };
 
+  const handleRowClick = (fn) => {
+    doDecompile(fn.addr, fn.name);
+  };
+
+  // Identifier (or hex-constant) link inside a decompiled body.
+  const jumpToSymbol = (token, addr) => {
+    const name = addrName[addr] || (symbols[token] !== undefined ? token : null);
+    doDecompile(addr, name);
+  };
+
   const rizinOk = !!(probe?.rizin?.available && probe?.rizin?.decompiler);
   const rizinPresent = !!probe?.rizin?.available;
   const functions = result?.functions || [];
+  const addrName = useMemo(() => {
+    const m = {};
+    Object.keys(symbols).forEach((n) => { m[symbols[n]] = n; });
+    return m;
+  }, [symbols]);
   const q = filter.trim().toLowerCase();
   const visibleFns = q
     ? functions.filter(fn => {
@@ -562,13 +663,13 @@ export default function AnalyzerPage() {
             </div>
           )}
 
-              {activeFn && (
+              {(activeFn || decompTarget) && (
                 <div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
                     <span style={{ fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 700, color: 'var(--accent)' }}>
-                      {fmtAddr(activeFn.addr)}
+                      {fmtAddr((decompTarget || activeFn).addr)}
                     </span>
-                    <span className="name" style={{ fontSize: 13 }}>{activeFn.name}</span>
+                    <span className="name" style={{ fontSize: 13 }}>{(decompTarget || activeFn).name || ''}</span>
                     <div style={{ flex: 1 }} />
                     {decompiling && <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>decompiling...</span>}
                   </div>
@@ -577,12 +678,92 @@ export default function AnalyzerPage() {
                       <p className="log-line error">{codeError}</p>
                     </div>
                   ) : decompiled ? (
-                    <pre className="code-view">{decompiled.code}</pre>
+                    <CodeBlock
+                      code={decompiled.code}
+                      symbols={symbols}
+                      addrName={addrName}
+                      onJump={jumpToSymbol}
+                    />
                   ) : !decompiling && (
                     <div className="empty-state">
                       <div className="empty-title">No function selected</div>
-                      <div className="empty-hint">Pick a function from the list to decompile it, or jump to an address below.</div>
+                      <div className="empty-hint">Pick a function from the list — or click any highlighted identifier inside a decompiled body.</div>
                     </div>
+                  )}
+                </div>
+              )}
+
+              {result?.session && (
+                <div className="hunter-config-card" style={{ padding: 14 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                    <span className="hunter-config-title" style={{ marginBottom: 0 }}>
+                      Strings
+                    </span>
+                    {strings && !stringsLoading && (
+                      <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                        {strings.length} / {result.size != null ? (result.size / 1048576).toFixed(0) + 'MB' : ''} scanned
+                      </span>
+                    )}
+                    <div style={{ flex: 1 }} />
+                    <input
+                      type="text"
+                      className="input-field"
+                      style={{ width: 200, padding: '6px 10px', fontSize: 12 }}
+                      placeholder="Filter strings"
+                      value={stringFilter}
+                      onChange={(e) => setStringFilter(e.target.value)}
+                    />
+                    <button
+                      className="btn btn-secondary"
+                      style={{ padding: '6px 14px', fontSize: 11 }}
+                      onClick={() => fetchStrings()}
+                      disabled={stringsLoading}
+                    >
+                      {stringsLoading ? 'SCANNING...' : (strings ? 'RESCAN' : 'SCAN')}
+                    </button>
+                  </div>
+                  {stringsError ? (
+                    <div className="log-line error" style={{ fontSize: 12 }}>{stringsError}</div>
+                  ) : stringsLoading ? (
+                    <div className="log-line dim" style={{ fontSize: 12 }}>Scanning image for ASCII + UTF-16LE runs...</div>
+                  ) : !strings ? (
+                    <div className="log-line dim" style={{ fontSize: 12 }}>
+                      ASCII + UTF-16LE runs mapped to VAs. Click a row to open it in the explorer below.
+                    </div>
+                  ) : strings.length === 0 ? (
+                    <div className="log-line dim" style={{ fontSize: 12 }}>No printable runs found.</div>
+                  ) : (
+                    (() => {
+                      const q = stringFilter.trim().toLowerCase();
+                      const visible = q
+                        ? strings.filter(s => s.text.toLowerCase().includes(q) || fmtAddr(s.addr).toLowerCase().includes(q))
+                        : strings;
+                      return (
+                        <div className="log-console" style={{ maxHeight: 260, overflow: 'auto', padding: 0 }}>
+                          {visible.length === 0 ? (
+                            <div className="log-line dim" style={{ padding: 10 }}>No strings match the filter</div>
+                          ) : visible.map((s, i) => (
+                            <div
+                              key={i}
+                              className="hex-row"
+                              style={{ cursor: 'pointer' }}
+                              title="Open in the address explorer"
+                              onClick={() => setExplorerTarget({ addr: s.addr, ts: Date.now() })}
+                            >
+                              <span style={{ color: 'var(--accent)', fontFamily: 'var(--font-mono)', fontSize: 11, flexShrink: 0 }}>
+                                {fmtAddr(s.addr)}
+                              </span>
+                              <span style={{ color: 'var(--text-ghost)', fontFamily: 'var(--font-mono)', fontSize: 10, flexShrink: 0, padding: '0 10px' }}>
+                                {s.enc}
+                              </span>
+                              <span style={{ color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)', fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {s.text}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })()
                   )}
                 </div>
               )}
@@ -591,6 +772,7 @@ export default function AnalyzerPage() {
                 api={api}
                 enabled={!!result}
                 sessionOpen={!!result?.session}
+                jumpTarget={explorerTarget}
               />
         </div>
       </div>
