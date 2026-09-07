@@ -79,19 +79,60 @@ class IL2CPPDumper(BaseDumper):
     # Metadata loading
     # ------------------------------------------------------------------
 
-    def _find_metadata_path(self) -> Optional[str]:
-        """Locate global-metadata.dat on disk."""
+    def _guess_game_dir(self) -> Optional[str]:
+        """Directory of the target executable, when resolvable.
+
+        run_dump never passes game_dir, so disk metadata search previously
+        never ran at all — the only anchor we reliably have at dump time is
+        the process we're attached to.
+        """
+        pid = getattr(self.reader, "pid", None)
+        if not pid:
+            return None
+        try:
+            import psutil
+            exe = psutil.Process(pid).exe()
+            return os.path.dirname(exe) if exe else None
+        except Exception:
+            return None
+
+    def _find_metadata_paths(self) -> list[str]:
+        """Ordered disk candidates for global-metadata.dat.
+
+        Roots: the configured game_dir (when given) and the target's exe
+        directory. Walks each depth-limited — the canonical Unity IL2CPP
+        layout is <game>/<game>_Data/il2cpp_data/Metadata/global-metadata.dat.
+        Canonical-looking hits sort first.
+        """
+        roots: list[str] = []
         if self._game_dir:
-            # Standard Unity IL2CPP layout:
-            # GameDir/GameName_Data/il2cpp_data/Metadata/global-metadata.dat
-            candidates = []
-            for root, dirs, files in os.walk(self._game_dir):
-                for f in files:
-                    if f.lower() == self.config.metadata_filename.lower():
-                        candidates.append(os.path.join(root, f))
-            if candidates:
-                return candidates[0]
-        return None
+            roots.append(self._game_dir)
+        exe_dir = self._guess_game_dir()
+        if exe_dir:
+            roots.append(exe_dir)
+
+        found: list[str] = []
+        seen: set[str] = set()
+        for root in roots:
+            try:
+                for dirpath, dirnames, filenames in os.walk(root):
+                    rel = os.path.relpath(dirpath, root)
+                    depth = 0 if rel == "." else rel.count(os.sep) + 1
+                    if depth >= 6:
+                        dirnames[:] = []
+                        continue
+                    for f in filenames:
+                        if f.lower() == self.config.metadata_filename.lower():
+                            full = os.path.abspath(os.path.join(dirpath, f))
+                            if full.lower() not in seen:
+                                seen.add(full.lower())
+                                found.append(full)
+            except Exception:
+                continue
+
+        found.sort(key=lambda p: (
+            0 if "il2cpp_data" in p.lower() else 1, p.lower()))
+        return found
 
     def _load_metadata_from_disk(self, path: str) -> bool:
         """Read and parse global-metadata.dat from disk."""
@@ -363,17 +404,21 @@ class IL2CPPDumper(BaseDumper):
         # Step 1: Load metadata
         self._update_progress("dumping", "Loading metadata...", 0)
 
-        metadata_path = self._find_metadata_path()
-        if metadata_path:
-            self._update_progress("dumping", f"Reading {metadata_path}")
-            if not self._load_metadata_from_disk(metadata_path):
-                if not self._load_metadata_from_memory():
-                    self._log_error("Failed to load metadata from any source")
-                    return []
-        else:
-            if not self._load_metadata_from_memory():
-                self._log_error("Metadata not found on disk or in memory")
-                return []
+        # Disk candidates first (magic-validated per file) so a protected
+        # build that hides metadata from memory scans still dumps; memory
+        # scan is the fallback, not the primary path.
+        loaded = False
+        for path in self._find_metadata_paths():
+            self._update_progress("dumping", f"Trying {path}")
+            if self._load_metadata_from_disk(path):
+                loaded = True
+                break
+        if not loaded:
+            self._log_error("Metadata not found on disk; scanning memory...")
+            loaded = self._load_metadata_from_memory()
+        if not loaded:
+            self._log_error("Failed to load metadata from any source")
+            return []
 
         # Step 2: Parse metadata
         self._update_progress("dumping", "Parsing metadata tables...", 15)
