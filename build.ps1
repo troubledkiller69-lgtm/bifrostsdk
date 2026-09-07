@@ -17,9 +17,16 @@ Set-Location $Root
 Write-Host "[*] BIFROST SDK build starting at $(Get-Date -Format 'yyyy-MM-dd HH:mm')"
 
 # ---- 1. Backend (PyInstaller) -------------------------------------------
+# Run PyInstaller under the canonical interpreter (same one the smoke test
+# uses below). Bare `pyinstaller` on PATH resolves to other Python installs
+# (e.g. the Python 3.9 Scripts dir) whose site-packages lack iced_x86 —
+# collect_submodules() then silently bundles nothing and packaged disasm
+# dies with DISASM_FAILED at runtime.
+$CanonicalPy = "C:\Users\howar\AppData\Local\Python\pythoncore-3.14-64\python.exe"
 if (-not $SkipBackend) {
-    Write-Host "[*] Building api_server.exe via PyInstaller..."
-    pyinstaller api_server.spec --noconfirm --clean
+    Write-Host "[*] Building api_server.exe via PyInstaller (canonical 3.14)..."
+    & $CanonicalPy -m PyInstaller api_server.spec --noconfirm --clean
+    if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed (exit $LASTEXITCODE)" }
     if (-not (Test-Path "$Root\dist\api_server.exe")) {
         throw "PyInstaller did not produce dist\api_server.exe"
     }
@@ -55,7 +62,7 @@ Set-Location $Root
 # ---- 4. Packaged smoke test ---------------------------------------------
 if (-not $SkipSmoke) {
     Write-Host "[*] Running packaged smoke test..."
-    & "C:\Users\howar\AppData\Local\Python\pythoncore-3.14-64\python.exe" "$Root\scripts\smoke_bridge.py" --packaged
+    & $CanonicalPy "$Root\scripts\smoke_bridge.py" --packaged
     if ($LASTEXITCODE -ne 0) { throw "Packaged smoke test failed" }
     Write-Host "[+] Smoke test passed"
 }
