@@ -111,9 +111,16 @@ def process_command(cmd_line):
                 # the traceback goes to stderr where the dev console reads it.
                 # Emitting error-level log lines here too made every failed
                 # operation render 2-3 error entries in the GUI.
-                _op_result_error(str(exc))
+                msg = str(exc)
+                tb_frames = traceback.extract_tb(sys.exc_info()[2])
+                if tb_frames:
+                    deepest = tb_frames[-1]
+                    where = (deepest.filename.replace("\\", "/").split("/")[-1]
+                             if deepest.filename else "?")
+                    msg = f"{msg} [at {where}:{deepest.lineno} in {deepest.name}]"
+                _op_result_error(msg)
                 _op_end("error", f"exception: {exc}")
-                emit_ipc({'type': 'result', 'data': {'error': str(exc)}, 'stream': stream_tag})
+                emit_ipc({'type': 'result', 'data': {'error': msg}, 'stream': stream_tag})
                 print(f"[!] {command} failed: {exc}", file=sys.stderr)
                 print(tb, file=sys.stderr)
             finally:

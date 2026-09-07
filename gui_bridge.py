@@ -21,7 +21,18 @@ import threading
 import traceback
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, PROJECT_ROOT)
+if getattr(sys, "frozen", False):
+    # Packaged: __file__ lives in the PyInstaller _MEI temp dir that gets
+    # wiped on exit. Dumps/analyzer output must go somewhere stable —
+    # next to the exe, mirroring the repo layout (output/ under app root).
+    exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+    if os.access(exe_dir, os.W_OK):
+        PROJECT_ROOT = exe_dir
+    else:
+        PROJECT_ROOT = os.path.join(os.environ.get("LOCALAPPDATA", exe_dir), "BIFROST")
+else:
+    # Dev: the repo root is the source tree itself.
+    sys.path.insert(0, PROJECT_ROOT)
 
 # This is monkey-patched at runtime by api_server.py to either capture output
 # for request-response commands or to emit JSON lines over stdout for
@@ -736,8 +747,17 @@ def run_dump(args):
     except Exception as e:
         # Single terminal signal. Traceback detail goes to stderr (the dev
         # console); the GUI gets one error line via the result mirror.
-        _op_result_error(str(e))
-        emit({"type": "result", "data": {"error": str(e)}})
+        # The deepest stack frame rides along in the message so failures on
+        # machines without a dev console still name their exact source line.
+        msg = str(e)
+        tb_frames = traceback.extract_tb(sys.exc_info()[2])
+        if tb_frames:
+            deepest = tb_frames[-1]
+            where = (deepest.filename.replace("\\", "/").split("/")[-1]
+                     if deepest.filename else "?")
+            msg = f"{msg} [at {where}:{deepest.lineno} in {deepest.name}]"
+        _op_result_error(msg)
+        emit({"type": "result", "data": {"error": msg}})
         print(f"[!] dump failed: {e}", file=sys.stderr)
         print(traceback.format_exc(), file=sys.stderr)
         _op_end("error", f"exception: {e}")
