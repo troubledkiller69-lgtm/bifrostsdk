@@ -115,6 +115,7 @@ KNOWN_GAME_EXES = {
     "among us.exe": "unity_il2cpp",
     "lethal company.exe": "unity_il2cpp",
     "valheim.exe": "unity_il2cpp",
+    "pixel gun 3d.exe": "unity_il2cpp",
 }
 
 
@@ -598,6 +599,28 @@ def sanitize_process_name(name: str) -> str:
     return cleaned or "unknown"
 
 
+def _resolve_unity_ambiguity(engine: str, module_names: set):
+    """Cross-check the picked engine profile against loaded module names.
+
+    'unity' is the legacy Mono alias — it gets picked for IL2CPP titles and
+    Mono titles get forced into unity_il2cpp. IL2CPP builds load
+    GameAssembly.dll; Mono builds load mono.dll / mono-2.0-bdwgc.dll.
+    Returns (engine, note) with note == '' when nothing needed changing.
+    """
+    mono_markers = {"mono.dll", "mono-2.0-bdwgc.dll", "mono-2.0-sgen.dll"}
+    if engine in ("unity", "unity_mono"):
+        if "gameassembly.dll" in module_names and not mono_markers & module_names:
+            return "unity_il2cpp", (
+                "Auto-switched to unity_il2cpp - GameAssembly.dll is loaded, "
+                "no Mono runtime DLL found")
+    elif engine == "unity_il2cpp":
+        if mono_markers & module_names and "gameassembly.dll" not in module_names:
+            return "unity_mono", (
+                "Auto-switched to unity_mono - Mono runtime DLL loaded, "
+                "no GameAssembly.dll")
+    return engine, ""
+
+
 def _process_exists(pid: int) -> bool:
     """Cheap psutil existence check — avoids kernel attach attempts on dead PIDs."""
     try:
@@ -695,6 +718,19 @@ def run_dump(args):
         if engine in ("unreal5", "unreal") and "marvel" in name.lower():
             engine = "unreal5_marvel"
             _log("Auto-switched to UE5 Marvel Rivals profile")
+
+        # Unity Mono vs IL2CPP is the most common profile mixup — the 'unity'
+        # alias means Mono, but IL2CPP titles (GameAssembly.dll) fail Mono
+        # validation. Cross-check the pick against loaded modules the same
+        # way the Marvel switch works above.
+        if engine in ("unity", "unity_mono", "unity_il2cpp"):
+            try:
+                loaded_names = {m["name"].lower() for m in reader.list_modules()}
+            except Exception:
+                loaded_names = set()
+            engine, ambiguity_note = _resolve_unity_ambiguity(engine, loaded_names)
+            if ambiguity_note:
+                _log(ambiguity_note)
 
         _log(f"Engine: {engine}")
         _progress("Initializing", 5)
@@ -1061,20 +1097,44 @@ def run_ac_detect(args):
         emit({"type": "result", "data": {"error": str(e), "code": "AC_SCAN_FAILED"}})
 
 
+def _latest_offsets_file() -> str:
+    """Newest offsets.json under the output root, or '' when none exists."""
+    newest = ""
+    newest_mtime = 0.0
+    root = os.path.join(PROJECT_ROOT, "output")
+    if os.path.isdir(root):
+        for dirpath, _dirs, files in os.walk(root):
+            if "offsets.json" not in files:
+                continue
+            p = os.path.join(dirpath, "offsets.json")
+            try:
+                mtime = os.path.getmtime(p)
+            except OSError:
+                continue
+            if mtime > newest_mtime:
+                newest, newest_mtime = p, mtime
+    return newest
+
+
 def run_test_webhook(args):
     url = args.get("url", "")
     if not url:
         emit({"type": "result", "data": {"error": "No webhook URL provided"}})
         return
     try:
+        # Attach the newest real dump so the test proves the attachment
+        # path end to end — an embed-only send would never show a file.
+        attach = _latest_offsets_file()
         _send_webhook(url, {
             "engine": "test",
             "classes": 42,
             "fields": 256,
             "elapsed": 1.3,
-            "output_dir": os.path.join(PROJECT_ROOT, "output", "test"),
-        })
-        emit({"type": "result", "data": {"success": True}})
+        }, attach_path=attach)
+        emit({"type": "result", "data": {
+            "success": True,
+            "attached": os.path.basename(attach) if attach else "",
+        }})
     except Exception as e:
         emit({"type": "result", "data": {"error": str(e)}})
 
