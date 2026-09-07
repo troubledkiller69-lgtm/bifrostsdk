@@ -21,3 +21,8 @@ Memory/SDK framework (Python core + engines, Electron/React GUI, JSON IPC protoc
 - Frozen backend surface: `python scripts/smoke_bridge.py --packaged`.
 - After touching GUI JSX: `npx.cmd vite build` in `gui/` (the JSX grammar gate â€” matched-pair edits can break nesting).
 - Protocol additions must land in `contracts/bifrost_protocol.json` (single source of truth), then `contracts/validate.py` fallback list.
+
+## CS2 / direct-attach notes
+- cs2.exe maps to the 'source' engine -> SourceDumper Source-2 path (SchemaSystem in schemasystem.dll). Verified dumping live: 3340 classes / 16630 fields.
+- VAC'd targets (CS2): stealth driver/hijack attach fails and falls back to direct MemoryReader — that path must stay exercised; it once hid the module_base MODULEINFO crash for months.
+- pymem structs are ctypes: use .name/.lpBaseOfDll, never subscript.

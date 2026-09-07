@@ -288,8 +288,35 @@ def _redact_webhook(url):
         return "<unparseable url>"
 
 
-def _send_webhook(url, data):
-    """POST a Discord embed with dump results.
+def _webhook_multipart(payload_json: bytes, file_path: str):
+    """Build Discord multipart/form-data: payload_json part + one file part.
+
+    Returns (body bytes, Content-Type header value). Discord reads the
+    payload_json part for the embed and files[0] as the uploaded file.
+    """
+    import uuid as _uuid
+
+    attach_name = (os.path.basename(file_path)
+                   .replace('"', "").replace("\r", "").replace("\n", ""))
+    boundary = "----bifrostwebhook" + _uuid.uuid4().hex
+    with open(file_path, "rb") as f:
+        file_bytes = f.read()
+    body = b"".join([
+        f"--{boundary}\r\n".encode("utf-8"),
+        b'Content-Disposition: form-data; name="payload_json"\r\n\r\n',
+        payload_json,
+        f"\r\n--{boundary}\r\n".encode("utf-8"),
+        (f'Content-Disposition: form-data; name="files[0]"; filename="{attach_name}"\r\n'
+         f'Content-Type: application/octet-stream\r\n\r\n').encode("utf-8"),
+        file_bytes,
+        f"\r\n--{boundary}--\r\n".encode("utf-8"),
+    ])
+    return body, f"multipart/form-data; boundary={boundary}"
+
+
+def _send_webhook(url, data, attach_path=""):
+    """POST a Discord embed with dump results (optionally the offsets file
+    attached as a Discord file upload).
 
     Hardened against the common 404 causes:
       * trailing/leading whitespace in pasted URLs
@@ -345,9 +372,8 @@ def _send_webhook(url, data):
         ],
         "footer": {"text": "BIFROST SDK"},
     }
-    if data.get("output_dir"):
-        embed["fields"].append({"name": "Output", "value": str(data["output_dir"])[:1024], "inline": False})
-
+    # Local file paths NEVER go into the embed text — the message lands on
+    # a remote server. Summary counts + the attached file only.
     payload = _json.dumps({"embeds": [embed]}).encode("utf-8")
     # Discord-recommended User-Agent format. Cloudflare (which fronts Discord)
     # aggressively 403's unknown UAs like "Python-urllib/3.x" or vendor-only
@@ -357,6 +383,18 @@ def _send_webhook(url, data):
         "Content-Type": "application/json",
         "User-Agent": "DiscordBot (bifrost-sdk, 3.0)",
     }
+
+    # Attach the dump file itself. Skip silently when missing or over
+    # Discord's webhook file cap (~8 MiB) — the embed still goes out.
+    try:
+        attach_size = (os.path.getsize(attach_path)
+                       if attach_path and os.path.isfile(attach_path) else 0)
+    except OSError:
+        attach_size = 0
+    if 0 < attach_size <= 8 * 1024 * 1024:
+        payload, content_type = _webhook_multipart(payload, attach_path)
+        headers["Content-Type"] = content_type
+
     req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
     _log(f"Discord POST → {_redact_webhook(url)}")
     try:
@@ -493,8 +531,9 @@ def _powershell_send(url, payload, headers):
             f"$ErrorActionPreference = 'Stop'; "
             f"$h = @{{ {header_lines} }}; "
             f"try {{ "
+            f"  $ct = if ($h.ContainsKey('Content-Type')) {{ $h['Content-Type'] }} else {{ 'application/json' }}; "
             f"  Invoke-RestMethod -Uri '{ps_url}' -Method POST "
-            f"    -Headers $h -ContentType 'application/json' "
+            f"    -Headers $h -ContentType $ct "
             f"    -InFile '{tmp_path}' -TimeoutSec 10 | Out-Null; "
             f"  Write-Output 'OK' "
             f"}} catch {{ "
@@ -739,7 +778,8 @@ def run_dump(args):
         # Discord webhook notification
         if webhook_url:
             try:
-                _send_webhook(webhook_url, result_data)
+                _send_webhook(webhook_url, result_data,
+                              attach_path=result_data.get("json", ""))
                 _log("Discord webhook sent")
             except Exception as wh_err:
                 _log(f"Webhook failed: {wh_err}", "warn")
