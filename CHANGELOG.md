@@ -32,3 +32,12 @@ Complete re-evaluation of the codebase. Brand consolidated to BIFROST SDK everyw
 
 - Unmapped pages raise instead of silent zero-fill; short physical reads raise; CR3 resolution failure raises instead of returning a placeholder.
 - AUTO access chains never implicitly map drivers. Kernel-capable code stays dormant until the user explicitly picks a driver mode.
+
+## Unreleased
+
+### UI redesign (flat, minimal)
+
+- Modern dark re-skin keeping the existing palette: gradients, glass blur, glow shadows, shimmer/pulse animations and lift-on-hover are gone; elevation is 1px hairlines and surface deltas only. Radius tightened (14/8 -> 8/6), Inter dropped for the native Segoe UI stack, scrollbars squared, focus = hairline hue shift instead of glow rings.
+- Primary buttons are now solid emerald (read: actionable) instead of gray gradients; status/alert colors stay reserved for state. Engine cards keep identity via color-mixed tag chips. Removed decorative traffic-light dots from the hunter/analyzer console headers and the error boundary now uses theme tokens.
+- Fixed a long-standing bug class: ~60 inline styles referenced undefined tokens (--frost-*, --shatter-*, --ice-*) that silently fell back to inherited colors. All mapped to real theme tokens.
+- Designed blank states (empty-state panel in the decompile pane instead of raw dim text).

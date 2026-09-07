@@ -93,7 +93,7 @@ export default function AddressExplorer({ api, enabled, sessionOpen }) {
           </span>
         )}
         {busy && (
-          <span style={{ marginLeft: 10, color: 'var(--frost-muted)', fontFamily: 'var(--font-mono)', fontSize: 11 }}>
+          <span style={{ marginLeft: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: 11 }}>
             scanning...
           </span>
         )}

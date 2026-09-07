@@ -31,7 +31,7 @@ export default function DumpPage({ engine, process, progress, logs, onStart, onS
         </div>
         <div className="stat-card">
           <div className="stat-label">Status</div>
-          <div className="stat-value" style={{ color: progress.running ? 'var(--shatter-amber)' : 'var(--frost-dim)' }}>
+          <div className="stat-value" style={{ color: progress.running ? 'var(--warn)' : 'var(--text-muted)' }}>
             {progress.running ? 'Running' : 'Idle'}
           </div>
         </div>
@@ -81,7 +81,7 @@ export default function DumpPage({ engine, process, progress, logs, onStart, onS
       </div>
 
       {!engine && !process && (
-        <div style={{ textAlign: 'center', marginTop: 16, color: 'var(--frost-muted)', fontSize: 12 }}>
+        <div style={{ textAlign: 'center', marginTop: 16, color: 'var(--text-muted)', fontSize: 12 }}>
           Select an engine and process first to start a dump.
         </div>
       )}

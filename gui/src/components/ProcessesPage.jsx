@@ -53,7 +53,7 @@ export default function ProcessesPage({ selected, onSelect }) {
         <div style={{
           padding: '12px 16px', margin: '0 16px 12px', borderRadius: 8,
           background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)',
-          color: '#ef4444', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8
+          color: 'var(--error)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8
         }}>
           <span style={{ fontSize: 16 }}>!</span>
           <span>Bridge Offline — Cannot enumerate processes. Start the Python backend first.</span>
@@ -85,9 +85,9 @@ export default function ProcessesPage({ selected, onSelect }) {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan="4" style={{ textAlign: 'center', padding: 24, color: 'var(--frost-muted)' }}>Scanning processes...</td></tr>
+              <tr><td colSpan="4" style={{ textAlign: 'center', padding: 24, color: 'var(--text-muted)' }}>Scanning processes...</td></tr>
             ) : filtered.length === 0 ? (
-              <tr><td colSpan="4" style={{ textAlign: 'center', padding: 24, color: 'var(--frost-muted)' }}>No processes found</td></tr>
+              <tr><td colSpan="4" style={{ textAlign: 'center', padding: 24, color: 'var(--text-muted)' }}>No processes found</td></tr>
             ) : (
               filtered.map((p) => (
                 <tr

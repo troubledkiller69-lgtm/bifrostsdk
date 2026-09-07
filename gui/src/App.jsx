@@ -14,16 +14,16 @@ class PageErrorBoundary extends Component {
   render() {
     if (this.state.hasError) {
       return (
-        <div style={{ padding: 32, color: '#ef4444', textAlign: 'center' }}>
-          <h2 style={{ marginBottom: 12 }}>Page Error</h2>
-          <p style={{ color: '#aaa', marginBottom: 16 }}>
+        <div style={{ padding: 32, color: 'var(--error)', textAlign: 'center' }}>
+          <h2 style={{ marginBottom: 12, fontWeight: 600 }}>Page Error</h2>
+          <p style={{ color: 'var(--text-muted)', marginBottom: 16 }}>
             {this.state.error?.message || 'An unexpected error occurred'}
           </p>
           <button
             onClick={() => this.setState({ hasError: false, error: null })}
             style={{
-              padding: '8px 20px', background: '#333', color: '#fff',
-              border: '1px solid #555', borderRadius: 6, cursor: 'pointer'
+              padding: '8px 20px', background: 'var(--bg-elevated)', color: 'var(--text-primary)',
+              border: '1px solid var(--border-hover)', borderRadius: 6, cursor: 'pointer'
             }}
           >
             Try Again
@@ -300,7 +300,10 @@ export default function App() {
             alignItems: 'center',
             gap: 10,
           }}>
-            <span style={{ fontSize: 16 }}>⚠</span>
+            <span style={{
+              width: 7, height: 7, borderRadius: '50%',
+              background: '#f5a623', flexShrink: 0,
+            }} />
             <span>
               Backend code has been updated but the running Python subprocess
               is from a previous build — fully quit and relaunch the app for

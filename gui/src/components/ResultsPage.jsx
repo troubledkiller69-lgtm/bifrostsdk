@@ -159,13 +159,13 @@ export default function ResultsPage({ data, setPage }) {
       <div className="page-header">
         <div className="page-title">
           Results
-          {exportMsg && <span style={{ marginLeft: 12, color: 'var(--shatter-green)', fontSize: 12, fontWeight: 400 }}>{exportMsg}</span>}
+          {exportMsg && <span style={{ marginLeft: 12, color: 'var(--success)', fontSize: 12, fontWeight: 400 }}>{exportMsg}</span>}
         </div>
         <div className="page-subtitle" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <span>
             {isSummaryShape ? `${data.classes} classes found` : `${classesArray.length} classes found`} 
             - {data.total_fields || data.fields || 0} fields total
-            {isSummaryShape && data.json && <span style={{ marginLeft: 8, fontSize: '0.8em', color: 'var(--text-dim)' }}>(summary - full data in {data.json})</span>}
+            {isSummaryShape && data.json && <span style={{ marginLeft: 8, fontSize: '0.8em', color: 'var(--text-muted)' }}>(summary - full data in {data.json})</span>}
           </span>
           <div className="btn-group" style={{ margin: 0, padding: 0 }}>
             <button className="btn btn-secondary" onClick={() => copyToClipboard('cpp')} title="Copy C++ header to clipboard">
@@ -232,7 +232,7 @@ export default function ResultsPage({ data, setPage }) {
             </div>
           ))}
           {isSummaryShape && (
-            <div style={{ padding: 12, color: 'var(--text-dim)', fontSize: '0.9em' }}>
+            <div style={{ padding: 12, color: 'var(--text-muted)', fontSize: '0.9em' }}>
               Full class data is in the JSON file on disk.<br />
               Use "Load JSON" in other tools or the path above to explore.
             </div>

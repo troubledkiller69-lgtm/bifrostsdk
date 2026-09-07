@@ -52,7 +52,7 @@ export default function ConfigEditorPage() {
           onChange={(e) => setConfigStr(e.target.value)}
         />
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 16 }}>
-          <span style={{ color: status.includes('Invalid') ? 'var(--shatter-red)' : 'var(--shatter-green)' }}>
+          <span style={{ color: status.includes('Invalid') ? 'var(--error)' : 'var(--success)' }}>
             {status}
           </span>
           <button className="btn btn-primary" onClick={saveConfig}>

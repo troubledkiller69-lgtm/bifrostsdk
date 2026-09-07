@@ -108,10 +108,10 @@ export default function BridgeStatus() {
   }, [api]);
 
   const getColor = () => {
-    if (status === 'ok') return '#22c55e';
-    if (status === 'degraded') return '#f59e0b';
-    if (status === 'offline') return '#ef4444';
-    return '#6b7280';
+    if (status === 'ok') return 'var(--success)';
+    if (status === 'degraded') return 'var(--warn)';
+    if (status === 'offline') return 'var(--error)';
+    return 'var(--text-muted)';
   };
 
   const label = status === 'ok' ? 'Bridge OK' : 
@@ -127,7 +127,7 @@ export default function BridgeStatus() {
       borderRadius: 6,
       background: 'rgba(255,255,255,0.06)',
       fontSize: 12,
-      color: '#ddd',
+      color: 'var(--text-primary)',
       border: `1px solid ${getColor()}33`
     }}>
       <div style={{ 
@@ -145,8 +145,8 @@ export default function BridgeStatus() {
       )}
       {recentErrorCount > 0 && (
         <span style={{ 
-          background: '#f59e0b22', 
-          color: '#f59e0b', 
+          background: 'var(--warn-soft)', 
+          color: 'var(--warn)', 
           padding: '1px 5px', 
           borderRadius: 3,
           fontSize: 10 

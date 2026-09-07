@@ -111,7 +111,7 @@ export default function DiffPage() {
         <button className="btn" onClick={() => loadFile(setBefore, setBeforeName)}>
           {beforeName ? `Before: ${beforeName}` : 'Load Before'}
         </button>
-        <span style={{ color: 'var(--frost-muted)' }}>vs</span>
+        <span style={{ color: 'var(--text-muted)' }}>vs</span>
         <button className="btn" onClick={() => loadFile(setAfter, setAfterName)}>
           {afterName ? `After: ${afterName}` : 'Load After'}
         </button>
@@ -135,19 +135,19 @@ export default function DiffPage() {
         <div className="diff-summary">
           <div className="diff-stat">
             <span className="dot added" />
-            <span style={{ color: '#86efac' }}>{diff.added.length} added</span>
+            <span style={{ color: 'var(--success)' }}>{diff.added.length} added</span>
           </div>
           <div className="diff-stat">
             <span className="dot removed" />
-            <span style={{ color: '#fca5a5' }}>{diff.removed.length} removed</span>
+            <span style={{ color: 'var(--error)' }}>{diff.removed.length} removed</span>
           </div>
           <div className="diff-stat">
             <span className="dot changed" />
-            <span style={{ color: '#fcd34d' }}>{diff.changed.length} changed</span>
+            <span style={{ color: 'var(--warn)' }}>{diff.changed.length} changed</span>
           </div>
           <div className="diff-stat">
             <span className="dot unchanged" />
-            <span style={{ color: 'var(--frost-muted)' }}>{diff.unchanged.length} unchanged</span>
+            <span style={{ color: 'var(--text-muted)' }}>{diff.unchanged.length} unchanged</span>
           </div>
         </div>
       )}
@@ -196,7 +196,7 @@ export default function DiffPage() {
                     {row.status === 'changed' && row.oldOffset !== row.offset && (
                       <span className="diff-old-value">0x{row.oldOffset?.toString(16).toUpperCase()}</span>
                     )}
-                    <span style={{ color: 'var(--ice-glow)' }}>
+                    <span style={{ color: 'var(--accent)' }}>
                       0x{(row.offset || 0).toString(16).toUpperCase()}
                     </span>
                   </td>

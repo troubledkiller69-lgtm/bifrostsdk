@@ -127,7 +127,7 @@ export default function SettingsPage() {
                 value={15}
                 disabled
               />
-              <small style={{ color: 'var(--frost-muted)' }}>Fixed 15s default; decompile_fn extended to 120s</small>
+              <small style={{ color: 'var(--text-muted)' }}>Fixed 15s default; decompile_fn extended to 120s</small>
             </div>
           </div>
         </div>

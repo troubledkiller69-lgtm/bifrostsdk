@@ -136,7 +136,7 @@ export default function MemoryViewerPage() {
           value={pid}
           onChange={(e) => setPid(e.target.value)}
         />
-        <span style={{ color: 'var(--frost-muted)', fontSize: 12 }}>@</span>
+        <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>@</span>
         <input
           className="hex-address-input"
           placeholder="0x7FF600000000"
@@ -148,7 +148,7 @@ export default function MemoryViewerPage() {
           {loading ? 'Reading...' : 'Read'}
         </button>
         <div style={{ flex: 1 }} />
-        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--frost-dim)', cursor: 'pointer' }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-muted)', cursor: 'pointer' }}>
           <button
             className={`settings-toggle ${autoRefresh ? 'on' : ''}`}
             onClick={() => setAutoRefresh(!autoRefresh)}
@@ -195,7 +195,7 @@ export default function MemoryViewerPage() {
         <div className="hex-interpreter">
           <div className="hex-interp-title">Type Interpreter</div>
           {selectedBytes.length === 0 ? (
-            <div style={{ color: 'var(--frost-muted)', fontSize: 12 }}>Click a byte to inspect</div>
+            <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>Click a byte to inspect</div>
           ) : (
             <>
               <div className="hex-interp-row"><span className="hex-interp-label">Offset</span><span className="hex-interp-value">0x{(baseAddr + selectedStart).toString(16).toUpperCase()}</span></div>
@@ -220,7 +220,7 @@ export default function MemoryViewerPage() {
               )}
             </div>
             {bookmarks.length === 0 ? (
-              <div style={{ color: 'var(--frost-muted)', fontSize: 11 }}>No bookmarks yet</div>
+              <div style={{ color: 'var(--text-muted)', fontSize: 11 }}>No bookmarks yet</div>
             ) : (
               bookmarks.map((bm, i) => (
                 <div
@@ -229,7 +229,7 @@ export default function MemoryViewerPage() {
                   onClick={() => setAddress(bm.address.toString(16).toUpperCase())}
                 >
                   <span>{bm.label}</span>
-                  <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--ice-deep)' }}>
+                  <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--bg-input)' }}>
                     0x{bm.address.toString(16).toUpperCase()}
                   </span>
                 </div>

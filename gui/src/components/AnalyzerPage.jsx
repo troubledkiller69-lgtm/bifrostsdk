@@ -249,7 +249,7 @@ export default function AnalyzerPage() {
             {probeError ? (
               <div style={{ fontSize: 12, color: 'var(--error)' }}>{probeError}</div>
             ) : !probe ? (
-              <div style={{ fontSize: 12, color: 'var(--frost-muted)' }}>Checking engine availability...</div>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Checking engine availability...</div>
             ) : (
               <>
                 <span
@@ -329,7 +329,7 @@ export default function AnalyzerPage() {
             ) : (
               <>
                 <div style={{ marginBottom: 12 }}>
-                  <label style={{ display: 'block', fontSize: 11, color: 'var(--frost-muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>
+                  <label style={{ display: 'block', fontSize: 11, color: 'var(--text-muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>
                     PID
                   </label>
                   <input
@@ -341,7 +341,7 @@ export default function AnalyzerPage() {
                   />
                 </div>
                 <div>
-                  <label style={{ display: 'block', fontSize: 11, color: 'var(--frost-muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>
+                  <label style={{ display: 'block', fontSize: 11, color: 'var(--text-muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>
                     Module
                   </label>
                   <input
@@ -380,7 +380,7 @@ export default function AnalyzerPage() {
               </button>
             )}
             <div style={{ height: 1, background: 'var(--border)', margin: '16px 0' }} />
-            <label style={{ display: 'block', fontSize: 11, color: 'var(--frost-muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>
+            <label style={{ display: 'block', fontSize: 11, color: 'var(--text-muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>
               Export Top N
             </label>
             <div style={{ display: 'flex', gap: 8 }}>
@@ -435,11 +435,6 @@ export default function AnalyzerPage() {
 
           <div className="hunter-console">
             <div className="hunter-console-header">
-              <div className="hunter-console-dots">
-                <div className="hunter-console-dot red" />
-                <div className="hunter-console-dot yellow" />
-                <div className="hunter-console-dot green" />
-              </div>
               <span className="hunter-console-title">analyzer.log</span>
             </div>
             <div className="hunter-console-body">
@@ -448,7 +443,7 @@ export default function AnalyzerPage() {
               ) : (
                 logs.map((log, i) => (
                   <div key={i} style={{ display: 'flex', gap: 10 }}>
-                    <span style={{ color: 'var(--frost-ghost)', flexShrink: 0 }}>[{log.time}]</span>
+                    <span style={{ color: 'var(--text-ghost)', flexShrink: 0 }}>[{log.time}]</span>
                     <span className={`log-line ${log.level}`}>{log.text}</span>
                   </div>
                 ))
@@ -575,7 +570,7 @@ export default function AnalyzerPage() {
                     </span>
                     <span className="name" style={{ fontSize: 13 }}>{activeFn.name}</span>
                     <div style={{ flex: 1 }} />
-                    {decompiling && <span style={{ fontSize: 11, color: 'var(--frost-muted)', fontFamily: 'var(--font-mono)' }}>decompiling...</span>}
+                    {decompiling && <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>decompiling...</span>}
                   </div>
                   {codeError ? (
                     <div className="log-console" style={{ maxHeight: 240, borderColor: 'var(--error)' }}>
@@ -584,7 +579,10 @@ export default function AnalyzerPage() {
                   ) : decompiled ? (
                     <pre className="code-view">{decompiled.code}</pre>
                   ) : !decompiling && (
-                    <div className="log-line dim" style={{ fontSize: 12 }}>Select a function to decompile it</div>
+                    <div className="empty-state">
+                      <div className="empty-title">No function selected</div>
+                      <div className="empty-hint">Pick a function from the list to decompile it, or jump to an address below.</div>
+                    </div>
                   )}
                 </div>
               )}

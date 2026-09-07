@@ -78,7 +78,7 @@ export default function BoilerplatePage({ dumpResults }) {
           <div className="sidebar-label" style={{ marginBottom: 12 }}>Project Settings</div>
           
           <div style={{ marginBottom: 16 }}>
-            <label style={{ display: 'block', fontSize: 11, color: 'var(--frost-muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>Project Name</label>
+            <label style={{ display: 'block', fontSize: 11, color: 'var(--text-muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>Project Name</label>
             <input 
               type="text" 
               value={projectName}
@@ -96,7 +96,7 @@ export default function BoilerplatePage({ dumpResults }) {
           </div>
 
           <div style={{ marginBottom: 20 }}>
-            <label style={{ display: 'block', fontSize: 11, color: 'var(--frost-muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>Output Directory</label>
+            <label style={{ display: 'block', fontSize: 11, color: 'var(--text-muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>Output Directory</label>
             <div style={{ display: 'flex', gap: '8px' }}>
               <input 
                 type="text" 
@@ -136,15 +136,15 @@ export default function BoilerplatePage({ dumpResults }) {
            <div className="sidebar-label" style={{ marginBottom: 12 }}>Data Source</div>
            {dumpResults ? (
              <div>
-               <div style={{ color: 'var(--shatter-green)', marginBottom: 8, fontSize: 13, fontWeight: 'bold' }}>✓ Active Dump Data Found</div>
-               <div style={{ fontSize: 12, color: 'var(--frost-muted)' }}>Engine: <span style={{ color: 'white' }}>{dumpResults.engine || 'Unknown'}</span></div>
-               <div style={{ fontSize: 12, color: 'var(--frost-muted)' }}>Classes: <span style={{ color: 'white' }}>{dumpResults.classes?.length || 0}</span></div>
-               <div style={{ fontSize: 12, color: 'var(--frost-muted)' }}>Total Offsets: <span style={{ color: 'white' }}>{dumpResults.total_fields || 0}</span></div>
+               <div style={{ color: 'var(--success)', marginBottom: 8, fontSize: 13, fontWeight: 'bold' }}>✓ Active Dump Data Found</div>
+               <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Engine: <span style={{ color: 'white' }}>{dumpResults.engine || 'Unknown'}</span></div>
+               <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Classes: <span style={{ color: 'white' }}>{dumpResults.classes?.length || 0}</span></div>
+               <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Total Offsets: <span style={{ color: 'white' }}>{dumpResults.total_fields || 0}</span></div>
              </div>
            ) : (
              <div>
-               <div style={{ color: 'var(--shatter-red)', marginBottom: 8, fontSize: 13, fontWeight: 'bold' }}>✗ No Dump Data</div>
-               <div style={{ fontSize: 12, color: 'var(--frost-muted)' }}>You must dump a game on the Dump page before generating a boilerplate.</div>
+               <div style={{ color: 'var(--error)', marginBottom: 8, fontSize: 13, fontWeight: 'bold' }}>✗ No Dump Data</div>
+               <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>You must dump a game on the Dump page before generating a boilerplate.</div>
              </div>
            )}
         </div>

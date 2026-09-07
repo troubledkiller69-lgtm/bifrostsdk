@@ -77,7 +77,7 @@ export function DriverHunterPage() {
             </div>
 
             <div style={{ marginBottom: 16 }}>
-              <label style={{ display: 'block', fontSize: 11, color: 'var(--frost-muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>
+              <label style={{ display: 'block', fontSize: 11, color: 'var(--text-muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>
                 Max Drivers to Scan
               </label>
               <input
@@ -110,11 +110,6 @@ export function DriverHunterPage() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <div className="hunter-console">
             <div className="hunter-console-header">
-              <div className="hunter-console-dots">
-                <div className="hunter-console-dot red" />
-                <div className="hunter-console-dot yellow" />
-                <div className="hunter-console-dot green" />
-              </div>
               <span className="hunter-console-title">hunter.log</span>
             </div>
 
@@ -124,7 +119,7 @@ export function DriverHunterPage() {
               ) : (
                 logs.map((log, i) => (
                   <div key={i} style={{ display: 'flex', gap: 10 }}>
-                    <span style={{ color: 'var(--frost-ghost)', flexShrink: 0 }}>[{log.time}]</span>
+                    <span style={{ color: 'var(--text-ghost)', flexShrink: 0 }}>[{log.time}]</span>
                     <span className={`log-line ${log.level}`}>{log.text}</span>
                   </div>
                 ))
@@ -153,7 +148,7 @@ export function DriverHunterPage() {
                           {(driver.tags || []).slice(0, 3).map((tag, i) => (
                             <span key={i} className="engine-card-tag" style={{
                               background: 'rgba(255,255,255,0.06)',
-                              color: 'var(--frost-dim)',
+                              color: 'var(--text-muted)',
                               fontSize: 9
                             }}>
                               {tag}
