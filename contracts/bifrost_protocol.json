@@ -143,6 +143,14 @@
       "response": "{type:'result', data: {count, min_len, strings:[{addr, offset, size, enc, text}]}} or {error, code: NO_SESSION | BAD_ARGS | UNMAPPED | READ_FAILED}",
       "notes": "IDA strings-window equivalent: whole-image scan for ASCII + UTF-16LE runs, mapped to VAs. Pure file read, no rizin spawn."
     },
+    "debug_snapshot": {
+      "direction": "request-response",
+      "args": {
+        "include_threads": "boolean (default false) — faulthandler thread dump of the backend process"
+      },
+      "response": "{type:'result', data: {current: {cmd, meta, stage, pct, idle_s, ring[]} | null, last: {.., outcome, duration}, target: {pid, name, running}, output: [{path, size, mtime}], known_engines: [string], threads?: string}} or {error, code: SNAPSHOT_FAILED}",
+      "notes": "Operation diagnostics. Answers 'is the op stuck or dead?': active op idle time, last events ring, target process liveness, output dir contents, optional full thread dump. New dump results with 0 classes fail loud with code EMPTY_DUMP instead of silent success."
+    },
     "cancel": {
       "direction": "request-response",
       "args": {

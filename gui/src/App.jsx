@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, Component } from 'react';
+import React, { useState, useEffect, useCallback, useRef, Component } from 'react';
 import Titlebar from './components/Titlebar';
 import Sidebar from './components/Sidebar';
 
@@ -44,6 +44,7 @@ import DiffPage from './components/DiffPage';
 import MemoryViewerPage from './components/MemoryViewerPage';
 import ACMonitorPage from './components/ACMonitorPage';
 import AnalyzerPage from './components/AnalyzerPage';
+import DiagnosticsPage from './components/DiagnosticsPage';
 import SettingsPage from './components/SettingsPage';
 import ConfigEditorPage from './components/ConfigEditorPage';
 import BridgeStatus from './components/BridgeStatus';
@@ -120,6 +121,9 @@ export default function App() {
   // Dump event listeners — stabilized hygiene (100-iter-02)
   // Progress and completion are handled by separate channels; results only
   // ever arrive from dump events now that main.js routes by stream tag.
+  // lastDumpEventRef feeds the stall watchdog effect below.
+  const lastDumpEventRef = useRef(Date.now());
+  const stallWarnedRef = useRef(false);
   useEffect(() => {
     if (!api) return;
 
@@ -127,23 +131,27 @@ export default function App() {
 
     const unsubProgress = api.onDumpProgress((msg) => {
       if (msg.type === 'progress') {
+        lastDumpEventRef.current = Date.now();
         setDumpProgress({ stage: msg.stage, pct: msg.pct, running: true });
       }
     });
     unsubs.push(unsubProgress);
 
     const unsubLog = api.onDumpLog((data) => {
+      lastDumpEventRef.current = Date.now();
       if (typeof data === 'string') addLog(data, 'info');
       else if (data && data.text) addLog(data.text, data.level || 'info');
     });
     unsubs.push(unsubLog);
 
     const unsubError = api.onDumpError((data) => {
+      lastDumpEventRef.current = Date.now();
       setDumpProgress(p => ({ ...p, running: false }));
     });
     unsubs.push(unsubError);
 
     const unsubComplete = api.onDumpComplete((msg) => {
+      lastDumpEventRef.current = Date.now();
       setDumpProgress(p => ({ ...p, running: false }));
       if (msg?.type !== 'result' || !msg.data) return;
       if (msg.data.error) {
@@ -172,6 +180,8 @@ export default function App() {
     if (!api || !selectedEngine || !selectedProcess) return;
     setDumpProgress({ stage: 'Initializing...', pct: 0, running: true });
     setLogs([]);
+    lastDumpEventRef.current = Date.now();
+    stallWarnedRef.current = false;
     
     const settings = loadSession('settings', {});
     
@@ -193,11 +203,30 @@ export default function App() {
     addLog('Cancellation requested — dump will stop at the next checkpoint', 'warn');
   }, [api, addLog]);
 
+  // Stall watchdog: a running dump that stops emitting events (progress,
+  // logs, terminal) for 45s is wedged or silently dead. Warn once per
+  // episode and point at Diagnostics instead of waiting forever.
+  useEffect(() => {
+    if (!dumpProgress.running) {
+      stallWarnedRef.current = false;
+      return;
+    }
+    const timer = setInterval(() => {
+      const silentFor = (Date.now() - lastDumpEventRef.current) / 1000;
+      if (silentFor > 45 && !stallWarnedRef.current) {
+        stallWarnedRef.current = true;
+        addLog(`No dump events in ${Math.floor(silentFor)}s — the backend may be wedged. ` +
+          'Open Diagnostics (Ctrl+11) for a thread dump and operation telemetry.', 'warn');
+      }
+    }, 10000);
+    return () => clearInterval(timer);
+  }, [dumpProgress.running, addLog]);
+
   // Keyboard shortcuts
   useEffect(() => {
     const handler = (e) => {
       if (e.ctrlKey && !e.shiftKey && !e.altKey) {
-        const pages = ['engines', 'processes', 'dump', 'results', 'spoofer', 'hunter', 'diff', 'memory', 'acmonitor', 'analyzer', 'config', 'settings'];
+        const pages = ['engines', 'processes', 'dump', 'results', 'spoofer', 'hunter', 'diff', 'memory', 'acmonitor', 'analyzer', 'diag', 'config', 'settings'];
         const num = parseInt(e.key);
         if (num >= 1 && num <= pages.length) {
           e.preventDefault();
@@ -264,6 +293,8 @@ export default function App() {
         return <ACMonitorPage />;
       case 'analyzer':
         return <AnalyzerPage />;
+      case 'diag':
+        return <DiagnosticsPage />;
       case 'config':
         return <ConfigEditorPage />;
       case 'settings':

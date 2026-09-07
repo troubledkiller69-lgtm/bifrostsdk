@@ -5,6 +5,10 @@ import threading
 
 _BUILD_STAMP = "4.0.0"
 
+# Streaming ops run on worker threads (see _stream_worker). Only one may run
+# at a time — the loop rejects a second streaming command with BUSY.
+_busy_stream = None
+
 # Import existing logic
 from gui_bridge import (
     KNOWN_GAME_EXES, list_processes, run_dump, run_spoof, run_spoof_info,
@@ -12,7 +16,9 @@ from gui_bridge import (
     run_test_webhook, cancel_operation,
     run_analyze_probe, run_analyze, run_decompile_fn, run_analyze_export,
     run_hexdump_at, run_disasm_at, run_xrefs_at, run_symbols, run_strings,
+    run_debug_snapshot,
 )
+from gui_bridge import _op_begin, _op_end, _op_result_error
 
 # Council remediation: protocol enforcement (Cluster 1)
 from contracts.validate import validate_command, validate_protocol_document, KNOWN_STREAMING
@@ -55,44 +61,69 @@ def process_command(cmd_line):
         return
 
     import gui_bridge
-    original_emit = gui_bridge.emit
 
     # If it's a streaming command
     if command in KNOWN_STREAMING:
+        global _busy_stream
         stream_tag = req.get("stream") or command
+
+        # One streaming op at a time — dumpers are not reentrant and two
+        # concurrent workers would fight over the global CANCEL_EVENT.
+        if _busy_stream is not None:
+            emit_ipc({'type': 'result', 'data': {
+                'error': f"Operation busy: {_busy_stream} is still running. Cancel it or wait.",
+                'code': 'BUSY',
+            }, 'stream': stream_tag})
+            return
 
         def tagged_emit(obj):
             if isinstance(obj, dict) and "stream" not in obj:
                 obj["stream"] = stream_tag
             emit_ipc(obj)
 
-        gui_bridge.emit = tagged_emit
-        try:
-            if command == 'dump':
-                run_dump(args)
-            elif command == 'spoof':
-                run_spoof(args)
-            elif command == 'generate':
-                run_generate(args)
-            elif command == 'hunt':
-                run_hunt(args)
-            elif command == 'analyze':
-                run_analyze(args)
-            elif command == 'analyze_export':
-                run_analyze_export(args)
-        except Exception as exc:
-            import traceback
-            tb = traceback.format_exc()
-            # ONE terminal signal per failure. The result error is what the
-            # UI surfaces (main.js mirrors it into the op.error channel);
-            # the traceback goes to stderr where the dev console reads it.
-            # Emitting error-level log lines here too made every failed
-            # operation render 2-3 error entries in the GUI.
-            emit_ipc({'type': 'result', 'data': {'error': str(exc)}, 'stream': stream_tag})
-            print(f"[!] {command} failed: {exc}", file=sys.stderr)
-            print(tb, file=sys.stderr)
-        finally:
-            gui_bridge.emit = original_emit
+        def _stream_worker():
+            # The op runs on its own thread so the stdin loop stays free:
+            # cancel takes effect mid-op, and debug_snapshot can peek at a
+            # wedged operation instead of queueing behind it.
+            gui_bridge._set_emit(tagged_emit)
+            try:
+                if command == 'dump':
+                    run_dump(args)
+                elif command == 'spoof':
+                    run_spoof(args)
+                elif command == 'generate':
+                    run_generate(args)
+                elif command == 'hunt':
+                    run_hunt(args)
+                elif command == 'analyze':
+                    run_analyze(args)
+                elif command == 'analyze_export':
+                    run_analyze_export(args)
+                # Handlers that ended their own telemetry (_op_end) leave the
+                # record closed; the ones that never began (instant validation
+                # failures) have no record and nothing to close.
+                _op_end("ok")
+            except Exception as exc:
+                import traceback
+                tb = traceback.format_exc()
+                # ONE terminal signal per failure. The result error is what the
+                # UI surfaces (main.js mirrors it into the op.error channel);
+                # the traceback goes to stderr where the dev console reads it.
+                # Emitting error-level log lines here too made every failed
+                # operation render 2-3 error entries in the GUI.
+                _op_result_error(str(exc))
+                _op_end("error", f"exception: {exc}")
+                emit_ipc({'type': 'result', 'data': {'error': str(exc)}, 'stream': stream_tag})
+                print(f"[!] {command} failed: {exc}", file=sys.stderr)
+                print(tb, file=sys.stderr)
+            finally:
+                gui_bridge._set_emit(None)
+                global _busy_stream
+                _busy_stream = None
+
+        _busy_stream = command
+        worker = threading.Thread(target=_stream_worker, daemon=True, name=f"bifrost-{command}")
+        worker.start()
         return
 
     if command == 'cancel':
@@ -107,7 +138,7 @@ def process_command(cmd_line):
     captured = []
     def capture_emit(obj):
         captured.append(obj)
-    gui_bridge.emit = capture_emit
+    gui_bridge._set_emit(capture_emit)
 
     def _pick_result(captured_list):
         """
@@ -173,6 +204,9 @@ def process_command(cmd_line):
         elif command == 'analyzer_strings':
             run_strings(args)
             response = _pick_result(captured)
+        elif command == 'debug_snapshot':
+            run_debug_snapshot(args)
+            response = _pick_result(captured)
         elif command == 'ping':
             response = {
                 'status': 'ok',
@@ -200,7 +234,7 @@ def process_command(cmd_line):
         else:
             response = {'type': 'result', 'data': {'error': f'Unknown command: {command}'}}
     finally:
-        gui_bridge.emit = original_emit
+        gui_bridge._set_emit(None)
 
     if req_id is not None:
         response['_id'] = req_id

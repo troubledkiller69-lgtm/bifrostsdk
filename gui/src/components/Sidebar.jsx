@@ -78,6 +78,12 @@ const NAV_ITEMS = [
       <path d="M6 20h4M14 10h4M6 14h2v6M14 4h2v6" />
     </svg>
   )},
+  { key: 'diag', label: 'Diagnostics', icon: (
+    <svg className="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M8 21h8M12 17v4M12 13a4 4 0 0 0 4-4V5a4 4 0 0 0-8 0v4a4 4 0 0 0 4 4z" />
+      <path d="M4 21h16" />
+    </svg>
+  )},
   { key: 'config', label: 'Config Editor', icon: (
     <svg className="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
       <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />

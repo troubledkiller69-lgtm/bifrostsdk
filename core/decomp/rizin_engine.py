@@ -71,7 +71,7 @@ def rizin_version(exe: str | None = None) -> str:
     try:
         creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         out = subprocess.run(
-            [exe, "-v"], capture_output=True, text=True,
+            [exe, "-v"], capture_output=True, text=True, stdin=subprocess.DEVNULL,
             timeout=10, creationflags=creationflags,
         )
         first = (out.stdout or "").splitlines()[0] if out.stdout else ""
@@ -325,7 +325,7 @@ class RizinSession:
             creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
             result = subprocess.run(
                 self._argv(commands, target),
-                capture_output=True, text=True,
+                capture_output=True, text=True, stdin=subprocess.DEVNULL,
                 timeout=self._cmd_timeout_secs, creationflags=creationflags,
             )
         except subprocess.TimeoutExpired as exc:
@@ -372,7 +372,7 @@ class RizinSession:
         try:
             argv = [self._exe, "-q0", "-c", "pdgs", "malloc://1024"]
             result = subprocess.run(
-                argv, capture_output=True, text=True,
+                argv, capture_output=True, text=True, stdin=subprocess.DEVNULL,
                 timeout=30, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
         except Exception:

@@ -102,6 +102,7 @@ contextBridge.exposeInMainWorld('bifrost', {
   analyzerXrefs: (addr) => ipcRenderer.invoke('python-command', { command: 'analyzer_xrefs', args: { addr } }),
   analyzerSymbols: () => ipcRenderer.invoke('python-command', { command: 'analyzer_symbols', args: {} }),
   analyzerStrings: (minLen, cap) => ipcRenderer.invoke('python-command', { command: 'analyzer_strings', args: { min_len: minLen, cap } }),
+  debugSnapshot: (includeThreads) => ipcRenderer.invoke('python-command', { command: 'debug_snapshot', args: { include_threads: !!includeThreads } }),
   onAnalyzeLog: (cb) => {
     const handler = (_, data) => cb(data);
     ipcRenderer.on('analyze-log', handler);

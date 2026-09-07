@@ -35,6 +35,7 @@ const ALLOWED_COMMANDS = [
   'analyze_probe', 'decompile_fn',
   'analyzer_hexdump', 'analyzer_disasm_at', 'analyzer_xrefs',
   'analyzer_symbols', 'analyzer_strings',
+  'debug_snapshot',
 ];
 
 // Request-response timeout per command. decompile_fn and analyzer_xrefs run

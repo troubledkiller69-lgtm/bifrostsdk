@@ -27,7 +27,35 @@ sys.path.insert(0, PROJECT_ROOT)
 # for request-response commands or to emit JSON lines over stdout for
 # streaming operations. See contracts/bifrost_protocol.json for the expected
 # event shapes (log, progress, result).
-emit = lambda obj: None
+#
+# Routing is THREAD-LOCAL: streaming operations run on a worker thread so the
+# main stdin loop stays free to serve cancel + debug_snapshot while a dump is
+# wedged — that is what makes the diagnostics page able to see inside a hung
+# operation. Each thread gets its own hook; the fallback is a no-op.
+_emit_tls = threading.local()
+
+
+def _emit_noop(obj):
+    pass
+
+
+def emit(obj):
+    """Route one event through the current thread's emit hook."""
+    hook = getattr(_emit_tls, "hook", None)
+    if hook is None:
+        hook = _emit_noop
+    hook(obj)
+
+
+def _set_emit(hook):
+    """Bind the emit hook for the CURRENT thread (api_server uses this)."""
+    if hook is None:
+        try:
+            del _emit_tls.hook
+        except AttributeError:
+            pass
+    else:
+        _emit_tls.hook = hook
 
 # Cooperative cancellation for long-running streaming operations.
 # Set by api_server.py when the renderer sends a `cancel` command.
@@ -105,12 +133,127 @@ def list_processes():
 
 def _log(text, level="info"):
     """Emit a log event. Shape defined in contracts/bifrost_protocol.json → events.log"""
+    _op_event("log", text, level)
     emit({"type": "log", "text": text, "level": level})
 
 
 def _progress(stage, pct):
     """Emit a progress event. Shape defined in contracts/bifrost_protocol.json → events.progress"""
+    _op_event("progress", stage, None, int(pct))
     emit({"type": "progress", "stage": stage, "pct": int(pct)})
+
+
+# ---------------------------------------------------------------------------
+# Operation telemetry (diagnostics surface)
+# ---------------------------------------------------------------------------
+# Every streaming operation registers via _op_begin/_op_end. While active,
+# its log/progress events land in a per-op ring so the diagnostics snapshot
+# can answer "what was the last thing it did, and when?" — the first step
+# when an operation dies silently or wedges. Single-threaded bridge: only
+# one op runs at a time, but engine internals can raise from worker threads,
+# so all access is locked.
+_TELE = {
+    "lock": threading.Lock(),
+    "current": None,     # dict or None
+    "last": None,        # most recently finished op (kept for diagnostics)
+    "started": time.time(),
+}
+
+
+def _op_begin(cmd: str, meta: dict):
+    """Register a streaming operation as the active one."""
+    with _TELE["lock"]:
+        _TELE["current"] = {
+            "cmd": cmd,
+            "meta": dict(meta),
+            "started": time.time(),
+            "stage": "",
+            "pct": 0,
+            "last_event_ts": time.time(),
+            "last_event": "operation started",
+            "ring": [],
+        }
+
+
+def _op_touch(text: str):
+    with _TELE["lock"]:
+        op = _TELE["current"]
+        if op is not None:
+            op["last_event_ts"] = time.time()
+            op["last_event"] = text
+
+
+def _op_event(kind: str, text: str, level=None, pct=None):
+    """Record one log/progress line on the active op ring (no emit)."""
+    with _TELE["lock"]:
+        op = _TELE["current"]
+        if op is None:
+            return
+        op["last_event_ts"] = time.time()
+        op["last_event"] = text
+        if kind == "progress":
+            op["stage"] = text or op["stage"]
+            op["pct"] = pct if pct is not None else op["pct"]
+        op["ring"].append({
+            "t": round(time.time() - op["started"], 1),
+            "kind": kind,
+            "level": level or "info",
+            "text": text,
+        })
+        op["ring"] = op["ring"][-60:]
+
+
+def _op_result_error(err_text: str):
+    """Record a terminal result error on the active op (state only)."""
+    _op_event("result-error", err_text or "operation failed", "error")
+
+
+def _op_end(outcome: str, note: str = ""):
+    """Close the active op and keep it as the last-op for diagnostics."""
+    with _TELE["lock"]:
+        op = _TELE["current"]
+        if op is None:
+            return
+        op["outcome"] = outcome  # 'ok' | 'error' | 'cancelled'
+        op["ended"] = time.time()
+        op["duration"] = round(op["ended"] - op["started"], 1)
+        if note:
+            op["ring"].append({
+                "t": round(op["ended"] - op["started"], 1),
+                "kind": "note",
+                "level": "info",
+                "text": note,
+            })
+            op["ring"] = op["ring"][-60:]
+        _TELE["last"] = op
+        _TELE["current"] = None
+
+
+def _op_snapshot() -> dict:
+    """Diagnostics view of the active/last op. Called on demand."""
+    with _TELE["lock"]:
+        current = _TELE["current"]
+        last = _TELE["last"]
+        now = time.time()
+        cur_view = None
+        if current is not None:
+            cur_view = {
+                "cmd": current["cmd"],
+                "meta": dict(current["meta"]),
+                "started": current["started"],
+                "running_s": round(now - current["started"], 1),
+                "stage": current["stage"],
+                "pct": current["pct"],
+                "last_event": current["last_event"],
+                "idle_s": round(now - current["last_event_ts"], 1),
+                "ring": list(current["ring"]),
+            }
+        return {
+            "current": cur_view,
+            "last": last,
+            "uptime_s": round(now - _TELE["started"], 1),
+            "now": now,
+        }
 
 
 _DISCORD_WEBHOOK_PREFIXES = (
@@ -437,6 +580,11 @@ def run_dump(args):
         emit({"type": "result", "data": {"error": f"Process {pid} is not running", "code": "NO_PROCESS"}})
         return
 
+    _op_begin("dump", {
+        "engine": engine, "pid": pid, "name": name,
+        "stealth": stealth_mode, "force_discovery": force_discovery,
+    })
+
     _log(f"BIFROST SDK - Starting {engine} dump")
     _log(f"Target: {name} (PID {pid})")
 
@@ -508,7 +656,9 @@ def run_dump(args):
             # Terminal failure: result only. The UI surfaces the message via
             # the complete/error mirror; an extra error-level log line here
             # made every failed dump render twice in the console.
+            _op_result_error(f"Unknown engine: {engine}")
             emit({"type": "result", "data": {"error": f"Unknown engine: {engine}"}})
+            _op_end("error", "unknown engine")
             return
 
         # Build extra kwargs for engines that need them
@@ -534,6 +684,7 @@ def run_dump(args):
         if CANCEL_EVENT.is_set():
             _log("Dump cancelled by user", "warn")
             emit({"type": "result", "data": {"error": "Cancelled", "code": "CANCELLED"}})
+            _op_end("cancelled", "cancelled by user")
             return
 
         _log(f"DUMP COMPLETE — {dumper.progress.classes_found} classes, "
@@ -542,6 +693,24 @@ def run_dump(args):
         if dumper.progress.errors:
             for err in dumper.progress.errors[:10]:
                 _log(f"Warning: {err}", "warn")
+
+        # A completed dump with zero classes and zero fields means discovery
+        # found nothing — wrong engine profile, protected target (VAC/AC),
+        # or the game updated its layout. That used to look like SUCCESS:
+        # empty results page, no error anywhere. Fail loud instead.
+        if dumper.progress.classes_found == 0 and dumper.progress.fields_found == 0:
+            _log("Zero classes extracted — dumping nothing is a failure", "warn")
+            msg = ("Dump completed but extracted 0 classes / 0 fields — the target "
+                   "blocked discovery or the engine profile is wrong for this build. "
+                   f"Output kept at {output_dir}.")
+            _op_result_error(msg)
+            emit({"type": "result", "data": {
+                "error": msg,
+                "code": "EMPTY_DUMP",
+                "details": {"output_dir": output_dir, "engine": engine},
+            }})
+            _op_end("error", "empty dump (0 classes)")
+            return
 
         result_data = {
             "headers": result.get("headers", []),
@@ -553,6 +722,8 @@ def run_dump(args):
             "output_dir": output_dir,
         }
         emit({"type": "result", "data": result_data})
+        _op_end("ok", f"{dumper.progress.classes_found} classes, "
+                      f"{dumper.progress.fields_found} fields")
 
         # Discord webhook notification
         if webhook_url:
@@ -565,9 +736,11 @@ def run_dump(args):
     except Exception as e:
         # Single terminal signal. Traceback detail goes to stderr (the dev
         # console); the GUI gets one error line via the result mirror.
+        _op_result_error(str(e))
         emit({"type": "result", "data": {"error": str(e)}})
         print(f"[!] dump failed: {e}", file=sys.stderr)
         print(traceback.format_exc(), file=sys.stderr)
+        _op_end("error", f"exception: {e}")
     finally:
         if reader:
             try:
@@ -577,6 +750,7 @@ def run_dump(args):
 
 
 def run_spoof(args):
+    _op_begin("spoof", {"mode": args.get("mode") or ""})
     try:
         from core.stealth.spoofer import HardwareSpoofer
 
@@ -596,7 +770,9 @@ def run_spoof(args):
             "preset": args.get("preset"),
         })
         emit({"type": "result", "data": result})
+        _op_end("ok", "spoof sequence finished")
     except Exception as e:
+        _op_end("error", f"spoof failed: {e}")
         _log(f"Spoofer error: {e}", "error")
         emit({"type": "result", "data": {"error": str(e)}})
 
@@ -626,6 +802,7 @@ def run_spoof_restore(args):
 
 
 def run_generate(args):
+    _op_begin("generate", {"project": args.get("project_name") or ""})
     try:
         from core.generator.generator import CppBoilerplateGenerator
 
@@ -640,12 +817,15 @@ def run_generate(args):
         )
         ok = gen.generate()
         emit({"type": "result", "data": {"success": ok, "path": gen.output_dir}})
+        _op_end("ok" if ok else "error", "generation finished")
     except Exception as e:
+        _op_end("error", f"generation failed: {e}")
         _log(f"Generator error: {e}", "error")
         emit({"type": "result", "data": {"success": False, "error": str(e)}})
 
 
 def run_hunt(args):
+    _op_begin("hunt", {"max_drivers": args.get("max_drivers") or 100})
     try:
         from core.hunter.hunter import DriverHunter
 
@@ -655,7 +835,9 @@ def run_hunt(args):
         max_drivers = min(int(args.get("max_drivers", 100)), 500)
         results = hunter.start_hunt(max_drivers=max_drivers)
         emit({"type": "result", "data": results})
+        _op_end("ok", f"hunt finished ({len(results) if isinstance(results, list) else '?'} hits)")
     except Exception as e:
+        _op_end("error", f"hunt failed: {e}")
         _log(f"Hunter error: {e}", "error")
         emit({"type": "result", "data": {"error": str(e)}})
 
@@ -890,6 +1072,7 @@ def run_analyze(args):
         emit({"type": "result", "data": {"error": "Invalid limit (1..2000)", "code": "BAD_ARGS"}})
         return
 
+    _op_begin("analyze", {"source_type": stype or "", "limit": limit})
     reader = None
     try:
         if stype == "module":
@@ -934,11 +1117,14 @@ def run_analyze(args):
         _log("Analyzer: starting analysis job")
         result = analyze(source, sink, limit=limit)
         emit({"type": "result", "data": result})
+        _op_end("ok", f"analyze finished ({result.get('total_functions', '?')} functions)")
     except Exception as e:
         if CANCEL_EVENT.is_set():
             _log("Analysis cancelled by user", "warn")
             emit({"type": "result", "data": {"error": "Cancelled", "code": "CANCELLED"}})
+            _op_end("cancelled", "cancelled by user")
             return
+        _op_end("error", f"analyze failed: {e}")
         _log(f"ERROR: {e}", "error")
         emit({"type": "result", "data": {"error": str(e)}})
     finally:
@@ -1036,6 +1222,83 @@ def run_strings(args):
         emit({"type": "result", "data": {"error": str(e), "code": "STRINGS_FAILED"}})
 
 
+def _output_dir_listing(target_name: str) -> list[dict]:
+    """Files under output/<target> sorted newest-first (diagnostics view)."""
+    try:
+        safe = sanitize_process_name(target_name)
+        root = os.path.join(PROJECT_ROOT, "output", safe)
+        if not os.path.isdir(root):
+            return []
+        entries = []
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames.sort()
+            for fname in filenames:
+                full = os.path.join(dirpath, fname)
+                try:
+                    st = os.stat(full)
+                except OSError:
+                    continue
+                rel = os.path.relpath(full, root)
+                entries.append({
+                    "path": rel,
+                    "size": st.st_size,
+                    "mtime": st.st_mtime,
+                })
+        entries.sort(key=lambda e: e["mtime"], reverse=True)
+        return entries[:30]
+    except Exception:
+        return []
+
+
+def run_debug_snapshot(args):
+    """Operation diagnostics snapshot — the 'is it stuck or dead?' answer.
+
+    Returns the active op (stage, idle time, last events ring), the last
+    finished op, target liveness, output-dir contents, and optionally a
+    faulthandler thread dump of the whole backend process.
+    """
+    try:
+        import faulthandler
+
+        snap = _op_snapshot()
+        cur = snap.get("current")
+        if cur is not None:
+            meta = cur.get("meta", {})
+            pid = meta.get("pid") or 0
+            name = meta.get("name") or ""
+            snap["target"] = {
+                "pid": pid,
+                "name": name,
+                "running": bool(_process_exists(pid)) if pid else None,
+            }
+            if name:
+                snap["output"] = _output_dir_listing(name)
+        elif snap.get("last") and snap["last"].get("meta", {}).get("name"):
+            snap["output"] = _output_dir_listing(snap["last"]["meta"]["name"])
+        if args.get("include_threads"):
+            # faulthandler writes via fd — StringIO has no fileno.
+            import tempfile
+            try:
+                with tempfile.TemporaryFile("w+", encoding="utf-8") as tf:
+                    faulthandler.dump_traceback(file=tf)
+                    tf.seek(0)
+                    snap["threads"] = tf.read()
+            except Exception as exc:
+                snap["threads"] = f"thread dump failed: {exc}"
+        snap["known_engines"] = sorted(_engine_registry_names())
+        emit({"type": "result", "data": snap})
+    except Exception as e:
+        emit({"type": "result", "data": {"error": str(e), "code": "SNAPSHOT_FAILED"}})
+
+
+def _engine_registry_names() -> list[str]:
+    try:
+        from engines.registry import ENGINE_REGISTRY
+        return list(ENGINE_REGISTRY.keys())
+    except Exception:
+        return []
+
+
 def run_analyze_export(args):
     """Batch-decompile the open session's top functions to .c files."""
     from core.decomp.analyzer import export_functions
@@ -1045,15 +1308,19 @@ def run_analyze_export(args):
     if not isinstance(limit, int) or limit <= 0 or limit > 2000:
         emit({"type": "result", "data": {"error": "Invalid limit (1..2000)", "code": "BAD_ARGS"}})
         return
+    _op_begin("analyze_export", {"limit": limit})
     try:
         _log("Analyzer: export pass started")
         sink = _decomp_sink()
         result = export_functions(sink, limit=limit)
         _log(f"Export complete — {result['count']} files in {result['dir']}")
         emit({"type": "result", "data": result})
+        _op_end("ok", f"export complete ({result['count']} files)")
     except Exception as e:
         if CANCEL_EVENT.is_set():
             emit({"type": "result", "data": {"error": "Cancelled", "code": "CANCELLED"}})
+            _op_end("cancelled", "cancelled by user")
             return
+        _op_end("error", f"export failed: {e}")
         _log(f"ERROR: {e}", "error")
         emit({"type": "result", "data": {"error": str(e)}})
