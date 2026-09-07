@@ -50,10 +50,17 @@ class BaseDumper(ABC):
         reader: ReaderProtocol,
         output_dir: str = "output",
         stealth_config: Optional[StealthConfig] = None,
+        target_module: Optional[str] = None,
+        logger: Optional[Callable] = None,
     ):
         self.reader = reader
         self.output_dir = output_dir
         self._stealth_config = stealth_config or STEALTH_OFF
+        # Target process name as the user picked it (cs2.exe etc). Engines
+        # that need per-game profile switches read this; it is optional so
+        # direct engine tests never have to supply it.
+        self.target_module = target_module
+        self._logger = logger or (lambda msg, level="info": None)
 
         # Create scanner with stealth parameters
         stealth_on = self._stealth_config is not None and self._stealth_config != STEALTH_OFF
