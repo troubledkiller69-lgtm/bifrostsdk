@@ -1,12 +1,21 @@
 """
 BIFROST SDK — rizin + rz-ghidra engine wrapper.
 
-Thin, testable seam over rzpipe (0.6.2 API: `rzpipe.open(file, flags,
-rizin_home=)` which spawns `rizin.exe <flags> -q0 <file>` and speaks the
-\0-terminated command protocol over pipes).
+Interactive rzpipe over stdin is unreliable on Windows: rizin only
+dispatches piped commands when it inherits a console, and console-less
+spawns (CREATE_NO_WINDOW, detached, new-console) all sit silent on their
+input pipe. The one-shot form works everywhere — `rizin -q0 -c '<cmds>'
+<file>` executes, prints to stdout, exits.
 
-Every rizin interaction funnels through `_run()` so tests can inject a fake
-runner and assert command sequences without a rizin binary on PATH.
+So this engine never keeps a session process alive. Every operation is a
+fresh spawn with the full command chain in `-c` (sleighhome + analysis +
+work), which costs ~2-4s per call on a cold start. Correctness and leak
+freedom beat round-trip latency here; per-function results are cached on
+the analyzer side so repeated clicks stay cheap.
+
+The runner seam (`runner=` param) keeps unit tests binary-free: methods
+route through `run()` when a runner is present, exactly like the old
+persistent-session design.
 """
 
 from __future__ import annotations
@@ -71,6 +80,17 @@ def rizin_version(exe: str | None = None) -> str:
         return ""
 
 
+def _sleighhome_for(exe: str) -> str:
+    """Sleigh language dir next to the binary, '' when absent.
+
+    rz-ghidra needs ghidra.sleighhome pointed at the bundled .sla/.cspec
+    set; the official zip keeps it under <prefix>/share/rizin/sleigh.
+    """
+    prefix = os.path.dirname(os.path.dirname(os.path.abspath(exe)))
+    cand = os.path.join(prefix, "share", "rizin", "sleigh")
+    return cand if os.path.isdir(cand) else ""
+
+
 # Parsing helpers (pure — unit tested without rizin) --------------------------
 
 def parse_aflj(payload) -> list[dict]:
@@ -123,6 +143,70 @@ def parse_pdgj(payload) -> dict:
     return {"code": ""}
 
 
+_MARKER = "BIFROST_MARKER_9f3a"
+
+
+def _split_json_docs(payload: str) -> list[str]:
+    """Split a stream of concatenated JSON documents into a list.
+
+    pdgj emits one JSON object per decompile with no separators between
+    documents. Repeated raw_decode walks the buffer document by document;
+    garbage that can't parse ends the walk so callers can detect desync by
+    comparing document count to the number of addresses requested.
+    """
+    docs: list[str] = []
+    if not payload:
+        return docs
+    decoder = json.JSONDecoder()
+    index = 0
+    size = len(payload)
+    while index < size:
+        while index < size and payload[index] in " \r\n\t":
+            index += 1
+        if index >= size:
+            break
+        if payload[index] != "{":
+            break
+        try:
+            obj, end = decoder.raw_decode(payload, index)
+        except ValueError:
+            break
+        docs.append(json.dumps(obj))
+        index = end
+    return docs
+
+
+def parse_batch_payload(payload) -> dict[int, str]:
+    """Legacy marker-stream parser — kept for API stability, superseded by
+    count-aligned chunk parsing in batch_decompile."""
+    out: dict[int, str] = {}
+    if not payload:
+        return out
+    current_addr: int | None = None
+    buffer = ""
+    for raw_line in payload.splitlines():
+        line = raw_line.rstrip()
+        if line.startswith(_MARKER):
+            if current_addr is not None and buffer.strip():
+                parsed = parse_pdgj(buffer)
+                if parsed.get("code"):
+                    out[current_addr] = parsed["code"]
+            try:
+                current_addr = int(line[len(_MARKER):].strip(), 16)
+            except ValueError:
+                current_addr = None
+            buffer = ""
+            continue
+        if current_addr is None:
+            continue
+        buffer += line + "\n"
+    if current_addr is not None and buffer.strip():
+        parsed = parse_pdgj(buffer)
+        if parsed.get("code"):
+            out[current_addr] = parsed["code"]
+    return out
+
+
 # Session ---------------------------------------------------------------------
 
 class FakeRunner:
@@ -141,10 +225,13 @@ class FakeRunner:
 
 
 class RizinSession:
-    """One rizin pipe on one file.
+    """One file, one logical rizin session — implemented as one-shot spawns.
 
-    The session is what makes per-function decompile cheap: analysis runs
-    once per file, then `pdgj` round-trips are tens of ms each.
+    Windows cannot drive rizin interactively over a pipe (see module
+    docstring), so there is no persistent process. The seam contract is
+    unchanged: `analyze()` issues `aaa`, `functions()` issues `aflj`,
+    `decompile()` issues `pdgj @ <addr>`, and everything routes through
+    `run()` when a runner is injected.
     """
 
     ENGINE_NAME = "rizin-ghidra"
@@ -155,7 +242,7 @@ class RizinSession:
         exe: str | None = None,
         base: int | None = None,
         runner=None,
-        cmd_timeout_secs: int = 120,
+        cmd_timeout_secs: int = 300,
         plugin_dir: str | None = None,
     ):
         self.file_path = os.path.abspath(file_path)
@@ -164,48 +251,23 @@ class RizinSession:
         self._runner = runner
         self._cmd_timeout_secs = cmd_timeout_secs
         self._plugin_dir = plugin_dir
-        self._pipe = None
+        self._fnlist: list[dict] | None = None
+        self._sleigh = _sleighhome_for(self._exe) if self._exe else ""
 
     # -- lifecycle ----------------------------------------------------------
 
     def open(self) -> None:
         if self._runner is not None:
-            return  # test seam: fake runner needs no pipe or binary
+            return  # test seam: fake runner needs no binary
         if not self._exe:
             raise RuntimeError(
                 "rizin is not provisioned. Run tools/provision_rizin.ps1 once, "
                 "or set BIFROST_RIZIN_DIR."
             )
-
-        import rzpipe  # lazy: module must not import rzpipe at package load
-
-        flags = ["-e", "bin.cache=true"] if self.base else []
-        if self.base:
-            flags = ["-B", hex(self.base)] + flags
-        prev_plugins = os.environ.get("RIZIN_PLUGINS")
-        if self._plugin_dir:
-            os.environ["RIZIN_PLUGINS"] = self._plugin_dir
-        try:
-            self._pipe = rzpipe.open(
-                self.file_path,
-                flags=flags,
-                rizin_home=os.path.dirname(self._exe),
-            )
-            if self._cmd_timeout_secs and self._cmd_timeout_secs > 0:
-                self._pipe.set_timeout(self._cmd_timeout_secs)
-        finally:
-            if prev_plugins is None:
-                os.environ.pop("RIZIN_PLUGINS", None)
-            else:
-                os.environ["RIZIN_PLUGINS"] = prev_plugins
+        # Nothing to hold open: every operation spawns its own rizin.
 
     def close(self) -> None:
-        if self._pipe is not None:
-            try:
-                self._pipe.quit()
-            except Exception:
-                pass
-            self._pipe = None
+        pass
 
     def __enter__(self):
         self.open()
@@ -214,41 +276,142 @@ class RizinSession:
     def __exit__(self, *exc):
         self.close()
 
-    # -- command surface -----------------------------------------------------
+    # -- spawn machinery ------------------------------------------------------
+
+    def _argv(self, commands: str, target: str | None = None) -> list[str]:
+        argv = [self._exe, "-q0"]
+        if self.base:
+            argv += ["-B", hex(self.base)]
+        argv += ["-c", commands, target or self.file_path]
+        return argv
+
+    def _spawn(self, commands: str, target: str | None = None) -> str:
+        """One-shot rizin run. Raises RuntimeError on non-zero exit."""
+        try:
+            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            result = subprocess.run(
+                self._argv(commands, target),
+                capture_output=True, text=True,
+                timeout=self._cmd_timeout_secs, creationflags=creationflags,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                f"rizin timed out after {self._cmd_timeout_secs}s "
+                f"on: {commands!r}"
+            ) from exc
+        except OSError as exc:
+            raise RuntimeError(f"failed to start rizin: {exc}") from exc
+        if result.returncode != 0:
+            detail = (result.stderr or "").strip().splitlines()
+            tail = detail[-1] if detail else f"exit {result.returncode}"
+            raise RuntimeError(f"rizin command failed: {commands!r} — {tail}")
+        return (result.stdout or "").replace("\r\n", "\n")
+
+    def _prelude(self) -> str:
+        """Commands every spawn needs: sleighhome so rz-ghidra can speak."""
+        parts = []
+        if self._sleigh:
+            parts.append(f"e ghidra.sleighhome={self._sleigh}")
+        return "; ".join(parts)
+
+    # -- command surface ------------------------------------------------------
 
     def run(self, command: str) -> str:
         if self._runner is not None:
             return self._runner(command)
-        if self._pipe is None:
-            raise RuntimeError("session not open")
-        result = self._pipe.cmd(command)
-        return result if result is not None else ""
+        chain = "; ".join(p for p in (self._prelude(), command) if p)
+        return self._spawn(chain)
 
     def decompiler_available(self) -> bool:
-        """rz-ghidra registers `pdgs` when its plugin is loaded.
-
-        An unknown-command response means the plugin is missing and every
-        pdg* call would fail — report that as unavailable.
-        """
-        try:
+        """rz-ghidra registers `pdgs` when its plugin is loaded."""
+        if self._runner is not None:
             out = self.run("pdgs")
+            if not out:
+                return True
+            lowered = out.lower()
+            if "unknown command" in lowered or "error" in lowered:
+                return False
+            return True
+        # Real probe on a scratch file; nonzero rc means the plugin (or
+        # rizin itself) is missing. A loaded plugin answers even with no
+        # sleigh languages configured.
+        try:
+            argv = [self._exe, "-q0", "-c", "pdgs", "malloc://1024"]
+            result = subprocess.run(
+                argv, capture_output=True, text=True,
+                timeout=30, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
         except Exception:
             return False
-        if not out:
-            return True  # loaded but no sleigh langs yet is still "available"
-        lowered = out.lower()
-        if "unknown command" in lowered or "error" in lowered:
+        if result.returncode != 0:
             return False
-        return True
+        lowered = (result.stdout or "").lower() + (result.stderr or "").lower()
+        return "unknown command" not in lowered and "cannot open" not in lowered
 
     def analyze(self) -> None:
-        """Run rizin auto-analysis. Heavy on big modules — callers stream."""
-        self.run("aaa")
+        """Auto-analysis. Results are cached inside the session so the
+        follow-up functions() call needs no second spawn."""
+        if self._runner is not None:
+            self.run("aaa")
+            return
+        if self._fnlist is None:
+            chain = "; ".join(p for p in (self._prelude(), "aaa; aflj") if p)
+            self._fnlist = parse_aflj(self._spawn(chain))
 
     def functions(self) -> list[dict]:
-        return parse_aflj(self.run("aflj"))
+        if self._runner is not None:
+            return parse_aflj(self.run("aflj"))
+        if self._fnlist is None:
+            chain = "; ".join(p for p in (self._prelude(), "aaa; aflj") if p)
+            self._fnlist = parse_aflj(self._spawn(chain))
+        return [dict(fn) for fn in self._fnlist]
 
     def decompile(self, addr: int) -> dict:
-        payload = parse_pdgj(self.run(f"pdgj @ {addr:#x}"))
+        if self._runner is not None:
+            payload = parse_pdgj(self.run(f"pdgj @ {addr:#x}"))
+            payload["addr"] = addr
+            return payload
+        chain = "; ".join(
+            p for p in (self._prelude(), f"aaa; pdgj @ {addr:#x}") if p
+        )
+        payload = parse_pdgj(self._spawn(chain))
         payload["addr"] = addr
         return payload
+
+    def batch_decompile(self, addrs: list[int]) -> dict[int, str]:
+        """Decompile many functions with as few spawns as possible.
+
+        Each spawn runs `pdgj` for a chunk of addresses; every successful
+        decompile prints exactly one JSON document, so documents align with
+        the requested order by count. A chunk whose document count comes up
+        short (a function rz-ghidra refused) is retried address-by-address —
+        one slow spawn is cheaper than silently wrong results.
+        """
+        if not addrs:
+            return {}
+        if self._runner is not None:
+            out: dict[int, str] = {}
+            for addr in addrs:
+                result = self.decompile(addr)
+                if result.get("code"):
+                    out[addr] = result["code"]
+            return out
+        results: dict[int, str] = {}
+        chunk_size = 16
+        for start in range(0, len(addrs), chunk_size):
+            chunk = addrs[start:start + chunk_size]
+            cmds = "; ".join(f"pdgj @ {addr:#x}" for addr in chunk)
+            chain = "; ".join(p for p in (self._prelude(), "aaa; " + cmds) if p)
+            payload = self._spawn(chain)
+            docs = _split_json_docs(payload)
+            if len(docs) == len(chunk):
+                for addr, doc in zip(chunk, docs):
+                    code = parse_pdgj(doc).get("code")
+                    if code:
+                        results[addr] = code
+                continue
+            for addr in chunk:  # desync — do them one at a time
+                result = self.decompile(addr)
+                if result.get("code"):
+                    results[addr] = result["code"]
+        return results

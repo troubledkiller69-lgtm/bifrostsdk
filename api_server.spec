@@ -19,6 +19,13 @@ hiddenimports += [
     'pefile', 'psutil', 'jsonschema',
 ]
 
+# core.decomp lazily imports these inside functions (rizin_engine.open,
+# disasm.disasm_region) — invisible to static analysis. collect_submodules
+# pulls iced_x86's compiled extension module (_iced_x86_py.pyd lives inside
+# the package dir, so it lands as a binary via the hiddenimport). rizin.exe
+# itself is spawned at runtime (one-shot -c processes) and is never bundled.
+hiddenimports += collect_submodules('iced_x86')
+
 a = Analysis(
     ['api_server.py'],
     pathex=[],

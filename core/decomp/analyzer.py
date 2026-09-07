@@ -4,13 +4,14 @@ BIFROST SDK — analyzer orchestration.
 Coordinates the two engines behind one job surface:
 
   * rizin-ghidra: load image -> auto-analysis -> function list -> per-fn
-    decompile (session stays open for cheap follow-up `decompile_fn` calls)
+    decompile (each operation is a one-shot rizin spawn; results cache on
+    the analyzer side so repeat decompile calls are cheap)
   * iced-x86: linear disassembly fallback (no decompiler)
 
-One process holds at most one open rizin session at a time (`CURRENT`).
-A new analyze() replaces it; decompile requests that don't match the open
-file get NO_SESSION. Sessions carry an idle timer so abandoned pipes don't
-leak rizin processes.
+One logical session is tracked at a time (`CURRENT`): a new analyze()
+replaces the old source, and decompile requests that don't match the open
+file get NO_SESSION. Idle sessions are closed so abandoned state can't
+leak rizin child processes.
 """
 
 from __future__ import annotations
@@ -63,27 +64,6 @@ def _default_plugin_dir(rizin_dir: str | None) -> str | None:
         return None
     cand = os.path.join(rizin_dir, "plugins")
     return cand if os.path.isdir(cand) else None
-
-
-def _session_sleighhome(session) -> None:
-    """Point ghidra.sleighhome at bundled .sla files when present.
-
-    rz-ghidra's cmake install puts Sleigh langs under share/rizin/sleigh in
-    the same prefix as the plugin; the official rizin zip carries its own
-    under share/rizin. Try both, ignore failure — pdg errors are surfaced
-    per request anyway.
-    """
-    rizin_dir = find_rizin_dir()
-    if not rizin_dir:
-        return
-    for sub in ("share/rizin/sleigh", "share/rizin"):
-        path = os.path.join(rizin_dir, sub)
-        if os.path.isdir(path):
-            try:
-                session.run(f"e ghidra.sleighhome={path}")
-            except Exception:
-                pass
-            return
 
 
 def _close_current():
@@ -354,15 +334,32 @@ def export_functions(sink: LogSink, limit: int = _EXPORT_FN_CAP) -> dict:
     chosen = ranked[: max(1, min(int(limit), _EXPORT_FN_CAP))]
     sink.log(f"exporting {len(chosen)} functions to {out_dir}")
 
+    # One rizin spawn for the whole batch — per-fn spawns would cost
+    # ~3s x N. Markers in the stream keep partial failures in place.
+    results = {}
+    addrs = [fn["addr"] for fn in chosen]
+    try:
+        results = session.batch_decompile(addrs)
+    except Exception as exc:
+        sink.log(f"batch decompile failed: {exc} — falling back per function", "warn")
+        for fn in chosen:
+            if sink.cancelled():
+                raise _Cancelled("export cancelled")
+            try:
+                result = session.decompile(fn["addr"])
+            except Exception:
+                continue
+            if result.get("code"):
+                results[fn["addr"]] = result["code"]
+
     written = []
     total = len(chosen)
     for index, fn in enumerate(chosen):
         if sink.cancelled():
             raise _Cancelled("export cancelled")
         addr = fn["addr"]
-        try:
-            result = session.decompile(addr)
-        except Exception:
+        code = results.get(addr)
+        if not code:
             continue
         name = fn["name"]
         if not name:
@@ -372,9 +369,11 @@ def export_functions(sink: LogSink, limit: int = _EXPORT_FN_CAP) -> dict:
         with open(path, "w", encoding="utf-8", errors="replace") as f:
             f.write(f"// {fn['name'] or '(anonymous)'} @ {addr:#x} "
                     f"size {fn['size']}\n")
-            f.write(result.get("code", "/* no code produced */"))
+            f.write(code)
             f.write("\n")
         written.append({"addr": addr, "name": name, "path": path})
+        with CURRENT["lock"]:
+            CURRENT["cache"][addr] = {"code": code, "name": fn["name"]}
         sink.progress("Decompiling", 50 + int(50 * (index + 1) / total))
 
     sink.progress("Done", 100)

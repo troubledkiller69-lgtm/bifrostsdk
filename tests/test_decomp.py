@@ -59,11 +59,20 @@ class TestParsePdgj:
 # ---------------------------------------------------------------------------
 
 class TestDiscovery:
-    def test_no_rizin_means_no_binary(self, monkeypatch):
-        monkeypatch.setenv("BIFROST_RIZIN_DIR", "C:\\definitely\\not\\here")
-        assert rizin_engine.find_rizin_dir() is None
+    def test_no_binary_version_never_raises(self, monkeypatch):
+        monkeypatch.setattr(rizin_engine, "find_rizin_dir", lambda: None)
         assert rizin_engine.rizin_binary() is None
         assert rizin_engine.rizin_version() == ""
+
+    def test_in_tree_rizin_discovered_when_provisioned(self):
+        # The dev tree ships rizin under gui/extra once provisioned. When it
+        # is absent (fresh CI clone), discovery must return None — never a
+        # half path.
+        found = rizin_engine.find_rizin_dir()
+        if found is None:
+            assert rizin_engine.rizin_binary() is None
+        else:
+            assert os.path.isfile(os.path.join(found, "bin", "rizin.exe"))
 
     def test_env_dir_wins_when_binary_exists(self, tmp_path, monkeypatch):
         bin_dir = tmp_path / "bin"
@@ -109,7 +118,8 @@ class TestRizinSessionFakeRunner:
         assert result["addr"] == 0x140001000
         assert "return 0" in result["code"]
 
-    def test_real_session_without_binary_raises(self):
+    def test_real_session_without_binary_raises(self, monkeypatch):
+        monkeypatch.setattr(rizin_engine, "rizin_binary", lambda: None)
         session = rizin_engine.RizinSession("C:\\fake\\mod.dll")
         with pytest.raises(RuntimeError, match="not provisioned"):
             session.open()
@@ -265,7 +275,8 @@ class TestAnalyzer:
         assert result["warnings"]
 
     def test_auto_falls_back_when_rizin_missing(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("BIFROST_RIZIN_DIR", "C:\\no\\such\\dir")
+        monkeypatch.setattr(analyzer, "rizin_binary", lambda: None)
+        monkeypatch.setattr(rizin_engine, "rizin_binary", lambda: None)
         sink = CollectingSink()
         result = analyzer.analyze(
             {"type": "file", "path": self._file(tmp_path), "engine": "auto"}, sink
@@ -299,7 +310,8 @@ class TestAnalyzer:
             analyzer.analyze({"type": "module", "module": "game.dll"}, sink)
 
     def test_probe_shapes(self, monkeypatch):
-        monkeypatch.setenv("BIFROST_RIZIN_DIR", "C:\\no\\such\\dir")
+        monkeypatch.setattr(analyzer, "find_rizin_dir", lambda: None)
+        monkeypatch.setattr(analyzer, "rizin_binary", lambda: None)
         probe = analyzer.probe()
         assert probe["rizin"]["available"] is False
         assert probe["iced"]["available"] is True
