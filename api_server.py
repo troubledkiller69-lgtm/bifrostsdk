@@ -83,8 +83,11 @@ def process_command(cmd_line):
         except Exception as exc:
             import traceback
             tb = traceback.format_exc()
-            emit_ipc({'type': 'log', 'text': f'[ERROR] {exc}', 'level': 'error', 'stream': stream_tag})
-            emit_ipc({'type': 'log', 'text': tb, 'level': 'error', 'stream': stream_tag})
+            # ONE terminal signal per failure. The result error is what the
+            # UI surfaces (main.js mirrors it into the op.error channel);
+            # the traceback goes to stderr where the dev console reads it.
+            # Emitting error-level log lines here too made every failed
+            # operation render 2-3 error entries in the GUI.
             emit_ipc({'type': 'result', 'data': {'error': str(exc)}, 'stream': stream_tag})
             print(f"[!] {command} failed: {exc}", file=sys.stderr)
             print(tb, file=sys.stderr)

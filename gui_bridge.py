@@ -428,15 +428,12 @@ def run_dump(args):
     # Input validation (council security finding T6)
     # Windows PIDs are 32-bit values; reject anything outside that range.
     if not isinstance(pid, int) or pid <= 0 or pid > 0xFFFFFFFF:
-        _log(f"Invalid PID: {pid}", "error")
         emit({"type": "result", "data": {"error": f"Invalid PID: {pid}"}})
         return
     if not isinstance(name, str) or not name.strip():
-        _log("Missing process name", "error")
         emit({"type": "result", "data": {"error": "Missing process name"}})
         return
     if not _process_exists(pid):
-        _log(f"Process {pid} is not running", "error")
         emit({"type": "result", "data": {"error": f"Process {pid} is not running", "code": "NO_PROCESS"}})
         return
 
@@ -508,7 +505,9 @@ def run_dump(args):
         from engines.registry import create_dumper, is_known_engine
 
         if not is_known_engine(engine):
-            _log(f"Unknown engine: {engine}", "error")
+            # Terminal failure: result only. The UI surfaces the message via
+            # the complete/error mirror; an extra error-level log line here
+            # made every failed dump render twice in the console.
             emit({"type": "result", "data": {"error": f"Unknown engine: {engine}"}})
             return
 
@@ -564,10 +563,11 @@ def run_dump(args):
                 _log(f"Webhook failed: {wh_err}", "warn")
 
     except Exception as e:
-        _log(f"ERROR: {e}", "error")
-        for line in traceback.format_exc().splitlines():
-            _log(f"  {line}", "error")
+        # Single terminal signal. Traceback detail goes to stderr (the dev
+        # console); the GUI gets one error line via the result mirror.
         emit({"type": "result", "data": {"error": str(e)}})
+        print(f"[!] dump failed: {e}", file=sys.stderr)
+        print(traceback.format_exc(), file=sys.stderr)
     finally:
         if reader:
             try:

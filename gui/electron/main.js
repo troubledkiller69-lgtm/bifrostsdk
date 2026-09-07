@@ -138,10 +138,12 @@ function startApiServer() {
       const op = STREAMING_CHANNELS[msg.stream];
       if (msg.type === 'log') {
         if (op) {
+          // Log lines ride the log channel only — including error-level
+          // lines. Forwarding them to the dedicated error channel too made
+          // every failure emit twice (main.js then also mirrors result
+          // errors into the error channel below). One failure = one
+          // terminal error event; the log console still shows the line.
           mainWindow.webContents.send(op.log, msg);
-          if (msg.level === 'error') {
-            mainWindow.webContents.send(op.error, { type: 'error', text: msg.text, level: 'error' });
-          }
         }
       } else if (msg.type === 'progress') {
         if (op) {

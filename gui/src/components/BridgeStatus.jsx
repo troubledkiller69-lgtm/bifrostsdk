@@ -1,19 +1,26 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 
 /**
- * BridgeStatus — Tier 1 observability component (100-iter-02 + Tier 1 on-ramp)
- * 
- * Shows a compact health indicator for the Python bridge + protocol.
- * Subscribes to the improved error channels created in this batch.
- * 
- * Follows frontend-ux-engineer principles: real states, minimal surface, existing patterns.
+ * BridgeStatus — health indicator for the Python bridge + protocol.
+ *
+ * Health comes from ping only. A failed dump/spoof/hunt is an OPERATION
+ * failure — it bumps a transient error pill, it does not brand the bridge
+ * degraded. Degraded/offline is reserved for protocol anomalies, a stale
+ * backend, or a dead subprocess, and the chip heals itself on the next
+ * healthy ping (every 15s), so a single bad job no longer sticks the app
+ * in a permanent warning state.
  */
 export default function BridgeStatus() {
   const [status, setStatus] = useState('unknown'); // 'ok' | 'degraded' | 'offline' | 'unknown'
   const [protocolVersion, setProtocolVersion] = useState(null);
-  const [recentErrorCount, setRecentErrorCount] = useState(0);
+  const [recentErrors, setRecentErrors] = useState([]); // timestamps
 
   const api = window.bifrost;
+
+  const bumpError = useCallback(() => {
+    const now = Date.now();
+    setRecentErrors(prev => [...prev.filter(t => now - t < 20000), now]);
+  }, []);
 
   useEffect(() => {
     if (!api) {
@@ -21,91 +28,44 @@ export default function BridgeStatus() {
       return;
     }
 
-    // Initial health check. sendCommand always resolves (it never rejects),
-    // so failures arrive as {error, code} — map them to offline explicitly.
-    api.command('ping').then((r) => {
-      if (r?.error) {
-        setStatus('offline');
-        return;
-      }
-      if (r?.status === 'ok') {
-        setStatus('ok');
-        if (r.protocol_version) setProtocolVersion(r.protocol_version);
-      } else {
-        setStatus('degraded');
-      }
-    }).catch(() => setStatus('offline'));
-
-    // Subscribe to the dedicated error channels (now properly supported after 100-iter-02 preload + main.js work)
-    const unsubs = [];
-
-    // Track which dedicated channels we successfully subscribed to, so the
-    // log-level=error fallback below only fires for channels that DON'T have
-    // a dedicated handler. Otherwise every dump failure double-counts: once
-    // via onDumpError, once via onDumpLog{level:'error'}. See the "err 90"
-    // incident — the counter hit 90 because every JPEXS retry registered 2x.
-    const dedicatedChannels = { dump: false, spoof: false, gen: false, hunt: false };
-
-    // Direct subscriptions to the improved on*Error methods
-    if (typeof api.onDumpError === 'function') {
-      const unsub = api.onDumpError(() => {
-        setRecentErrorCount((c) => c + 1);
-        setStatus(prev => prev !== 'offline' ? 'degraded' : prev);
-      });
-      if (typeof unsub === 'function') {
-        unsubs.push(unsub);
-        dedicatedChannels.dump = true;
-      }
-    }
-    if (typeof api.onSpoofError === 'function') {
-      const unsub = api.onSpoofError(() => {
-        setRecentErrorCount((c) => c + 1);
-        setStatus(prev => prev !== 'offline' ? 'degraded' : prev);
-      });
-      if (typeof unsub === 'function') {
-        unsubs.push(unsub);
-        dedicatedChannels.spoof = true;
-      }
-    }
-    if (typeof api.onGenError === 'function') {
-      const unsub = api.onGenError(() => {
-        setRecentErrorCount((c) => c + 1);
-        setStatus(prev => prev !== 'offline' ? 'degraded' : prev);
-      });
-      if (typeof unsub === 'function') {
-        unsubs.push(unsub);
-        dedicatedChannels.gen = true;
-      }
-    }
-    if (typeof api.onHuntError === 'function') {
-      const unsub = api.onHuntError(() => {
-        setRecentErrorCount((c) => c + 1);
-        setStatus(prev => prev !== 'offline' ? 'degraded' : prev);
-      });
-      if (typeof unsub === 'function') {
-        unsubs.push(unsub);
-        dedicatedChannels.hunt = true;
-      }
-    }
-
-    // Fallback: only listen for log-level=error on channels where the
-    // dedicated error subscription FAILED. Prevents double-counting on
-    // backends that emit both event types. Old backends that only emit
-    // log lines still surface in the counter via this fallback.
-    if (!dedicatedChannels.dump && typeof api.onDumpLog === 'function') {
-      const unsubGeneral = api.onDumpLog((data) => {
-        if (data && data.level === 'error') {
-          setRecentErrorCount((c) => c + 1);
-          setStatus(prev => prev !== 'offline' ? 'degraded' : prev);
+    const ping = () => {
+      api.command('ping').then((r) => {
+        if (r?.error) {
+          setStatus('offline');
+          return;
         }
-      });
-      if (typeof unsubGeneral === 'function') unsubs.push(unsubGeneral);
-    }
+        if (r?.status === 'ok') {
+          setStatus('ok');
+          if (r.protocol_version) setProtocolVersion(r.protocol_version);
+        } else {
+          setStatus('degraded');
+        }
+      }).catch(() => setStatus('offline'));
+    };
+    ping();
+    const pingTimer = setInterval(ping, 15000);
+
+    // One terminal error per failed operation (main.js mirrors result
+    // errors into the op.error channel exactly once) — count it, don't
+    // degrade the bridge over it.
+    const unsubs = [];
+    const bind = (fn) => {
+      if (typeof fn === 'function') {
+        const unsub = fn(bumpError);
+        if (typeof unsub === 'function') unsubs.push(unsub);
+      }
+    };
+    bind(api.onDumpError);
+    bind(api.onSpoofError);
+    bind(api.onGenError);
+    bind(api.onHuntError);
+    bind(api.onAnalyzeError);
 
     return () => {
+      clearInterval(pingTimer);
       unsubs.forEach((u) => u && u());
     };
-  }, [api]);
+  }, [api, bumpError]);
 
   const getColor = () => {
     if (status === 'ok') return 'var(--success)';
@@ -143,15 +103,16 @@ export default function BridgeStatus() {
           v{protocolVersion}
         </span>
       )}
-      {recentErrorCount > 0 && (
-        <span style={{ 
-          background: 'var(--warn-soft)', 
-          color: 'var(--warn)', 
-          padding: '1px 5px', 
+      {recentErrors.length > 0 && (
+        <span style={{
+          background: 'var(--warn-soft)',
+          color: 'var(--warn)',
+          padding: '1px 5px',
           borderRadius: 3,
-          fontSize: 10 
+          fontSize: 10,
+          fontFamily: 'var(--font-mono)'
         }}>
-          {recentErrorCount} err
+          {recentErrors.length} err
         </span>
       )}
     </div>

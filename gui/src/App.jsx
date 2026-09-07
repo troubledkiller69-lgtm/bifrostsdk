@@ -140,8 +140,6 @@ export default function App() {
     unsubs.push(unsubLog);
 
     const unsubError = api.onDumpError((data) => {
-      if (typeof data === 'string') addLog(data, 'error');
-      else if (data && data.text) addLog(data.text, 'error');
       setDumpProgress(p => ({ ...p, running: false }));
     });
     unsubs.push(unsubError);
@@ -150,7 +148,10 @@ export default function App() {
       setDumpProgress(p => ({ ...p, running: false }));
       if (msg?.type !== 'result' || !msg.data) return;
       if (msg.data.error) {
-        addLog(msg.data.error, 'error');
+        // Terminal failure — single console entry. The backend reports one
+        // result error; main.js mirrors it here. The dedicated error
+        // channel carries state only, so this text never doubles.
+        addLog(`[ERROR] ${msg.data.error}`, 'error');
         return;
       }
       setDumpResults(msg.data);
