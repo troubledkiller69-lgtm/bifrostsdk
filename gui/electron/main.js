@@ -19,7 +19,7 @@ const BIFROST_PROTOCOL_VERSION = '1.3';
 // channels — no cross-contamination between dump/spoof/analyze.
 // analyze_export reuses the analyze-* channels (protocol events_emitted).
 const STREAMING_CHANNELS = {
-  dump:   { log: 'dump-log',   error: 'dump-error',   progress: 'dump-progress',   complete: 'dump-complete' },
+  dump:   { log: 'dump-log',   error: 'dump-error',   progress: 'dump-progress',   complete: 'dump-complete',   access: 'dump-access' },
   spoof:  { log: 'spoof-log',  error: 'spoof-error',  progress: 'spoof-progress',  complete: 'spoof-complete' },
   analyze: { log: 'analyze-log', error: 'analyze-error', progress: 'analyze-progress', complete: 'analyze-complete' },
   analyze_export: { log: 'analyze-log', error: 'analyze-error', progress: 'analyze-progress', complete: 'analyze-complete' },
@@ -148,6 +148,10 @@ function startApiServer() {
       } else if (msg.type === 'progress') {
         if (op) {
           mainWindow.webContents.send(op.progress, msg);
+        }
+      } else if (msg.type === 'access') {
+        if (op && op.access) {
+          mainWindow.webContents.send(op.access, msg);
         }
       } else if (msg.type === 'result') {
         if (op) {

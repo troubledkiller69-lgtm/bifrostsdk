@@ -670,6 +670,7 @@ def run_dump(args):
 
     reader = None
     stealth_config = None
+    attach_info = None
 
     try:
         # Transport pick. 'auto' (and anything unknown) means direct — the
@@ -680,6 +681,8 @@ def run_dump(args):
         if transport == "extreme":
             transport = "cr3"  # legacy GUI label for the CR3-bypass mode
 
+        _t_attach = time.time()
+        attach_info = {"requested": stealth_mode or "auto", "transport": transport}
         if transport == "direct":
             from core.memory import MemoryReader
             if stealth_mode in (None, "", "auto"):
@@ -688,6 +691,12 @@ def run_dump(args):
                 _log("Access: Direct (no stealth)")
             reader = MemoryReader(pid=pid)
             stealth_config = None
+            attach_info.update({
+                "method_name": "Direct (OpenProcess)",
+                "probed": True,
+                "fallback": False,
+                "steps": [{"step": "open process", "ok": True, "detail": f"pid {pid}"}],
+            })
         else:
             try:
                 from core.stealth import StealthReader
@@ -701,13 +710,38 @@ def run_dump(args):
                 stealth_config = StealthConfig(method=method_map[transport])
                 _log(f"Access: Stealth ({transport})")
                 reader = StealthReader(pid=pid, config=stealth_config)
+                steps = [
+                    {"step": s[0], "ok": bool(s[1]), "detail": str(s[2] or "")}
+                    for s in getattr(reader, "attach_steps", [])
+                ]
+                attach_info.update({
+                    "method_name": reader.method_name,
+                    "probed": True,
+                    "fallback": False,
+                    "steps": steps,
+                })
                 _log(f"Connected via: {reader.method_name} (probe verified)")
             except Exception as e:
+                # The reader ctor raises with the failure chain embedded in
+                # the message (reader._connect raises RuntimeError with it).
+                attach_info["fallback"] = True
+                attach_info["method_name"] = "Direct (fallback)"
+                attach_info["probed"] = True
+                attach_info["steps"] = [{"step": "stealth connect", "ok": False, "detail": str(e)}]
                 _log(f"Stealth ({transport}) attach failed: {e}", "warn")
                 _log("Falling back to direct attach...", "warn")
                 from core.memory import MemoryReader
                 reader = MemoryReader(pid=pid)
                 stealth_config = None
+        attach_info["ms"] = int((time.time() - _t_attach) * 1000)
+        # Surface attach resolution as a structured event (contract: events.access)
+        emit({"type": "access", "data": attach_info})
+    except Exception as e:
+        if attach_info is not None:
+            attach_info["fallback"] = True
+            attach_info["ms"] = int((time.time() - _t_attach) * 1000)
+            emit({"type": "access", "data": attach_info})
+        raise
 
         # Auto-detect engine
         if engine == "auto":

@@ -39,6 +39,21 @@ python scripts/smoke_bridge.py         # exercises the stdio IPC protocol end to
 
 Engine dumpers run against mock readers; the rizin path is covered through a fake-runner seam plus live backend tests that hit a real `api_server.py`.
 
+## Output validation
+
+Two CLI checks for dump artifacts (run against `output/` or a nested dump dir like `output/cs2/`):
+
+```bash
+python scripts/verify_output.py output\cs2 --headers output\cs2
+python scripts/compare_dumps.py output\cs2 <newer-dump-dir>
+```
+
+`verify_output.py` loads `offsets.json`, validates it against `contracts/sdk_output_schema.json` (jsonschema when installed, a manual structural walk otherwise), cross-checks `_meta` totals against real content, and flags zero-field classes and case-collision field names. `--headers <dir>` globs `*.h` for balanced braces, missing struct/class declarations, empty struct bodies, and typeless member lines. Exit codes: 0 clean, 1 problems, 2 no `offsets.json`. Zero-field classes are reported but informational by default (real engine dumps carry them legitimately); `--strict` makes them fatal.
+
+`compare_dumps.py` is the offset-drift watcher — diff two dump outputs and it reports removed/added/changed classes with a per-field `old_hex → new_hex` table. Hex strings and raw ints both normalize; null offsets (AS3-style) compare null-vs-null as unchanged. Exit codes: 0 no drift (new classes alone are fine), 1 drift (changed/removed offsets or classes), 2 missing/unparseable input.
+
+Both are exercised by `tests/test_output_validation.py`.
+
 ## Build
 
 One script does the whole chain — PyInstaller backend, `gui/extra` staging, Electron installer, packaged smoke test:
@@ -69,7 +84,7 @@ contracts/            protocol JSON + schema + validator (single source of truth
 drivers/              vulnerable driver list + fetcher, hash-verified
 gui/                  Electron + React frontend
 tools/                provision_rizin.ps1
-scripts/              smoke_bridge.py
+scripts/              smoke_bridge.py, verify_output.py, compare_dumps.py
 tests/                208 pytest tests
 docs/ARCHITECTURE.md  the four-layer model, in depth
 ```
@@ -89,7 +104,7 @@ docs/ARCHITECTURE.md  the four-layer model, in depth
 
 `KNOWN_GAME_EXES` maps known executables to engines; anything unknown falls back to module-based detection in `core/process.py`.
 
-Adding an engine: subclass `BaseDumper` in `engines/<engine>/dumper.py`, register it in `engines/registry.py`, add known exes to `KNOWN_GAME_EXES`. That's the whole diff.
+Adding an engine: subclass `BaseDumper` in `engines/<engine>/dumper.py`, register it in `engines/registry.py`, add known exes to `KNOWN_GAME_EXES`. That's the whole diff — the full walkthrough (dumper contract, detection, output schema, tests) is in `docs/ENGINE_GUIDE.md`, with a copyable skeleton in `engines/template/`.
 
 ## The Analyzer
 

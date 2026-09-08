@@ -68,7 +68,8 @@ if (-not $SkipSmoke) {
 }
 
 Write-Host ""
+$InstallVer = (Get-Content (Join-Path $Root 'gui\package.json') -Raw | ConvertFrom-Json).version
 Write-Host "[+] Build complete."
 Write-Host "    Backend : dist\api_server.exe"
 Write-Host "    App     : gui\dist-electron\win-unpacked\BIFROST SDK.exe"
-Write-Host "    Installer: gui\dist-electron\BIFROST-SDK-4.0.0-Setup.exe"
+Write-Host "    Installer: gui\dist-electron\BIFROST-SDK-$InstallVer-Setup.exe"

@@ -21,7 +21,7 @@ function saveSettings(settings) {
   localStorage.setItem('bifrost_settings', JSON.stringify(settings));
 }
 
-export default function SettingsPage() {
+export default function SettingsPage({ theme = 'midnight', setTheme }) {
   const [settings, setSettings] = useState(loadSettings);
   const [saved, setSaved] = useState(false);
   const [webhookStatus, setWebhookStatus] = useState(null);
@@ -71,6 +71,23 @@ export default function SettingsPage() {
           {/* General */}
           <div className="settings-section">
             <div className="settings-section-title">General</div>
+
+            <div className="settings-row">
+              <div className="settings-label">
+                Theme
+                <small>Midnight (dark), Paper (light), or Terminal (CRT mono)</small>
+              </div>
+              <select
+                className="input-field"
+                style={{ width: 160 }}
+                value={theme}
+                onChange={(e) => setTheme(e.target.value)}
+              >
+                <option value="midnight">Midnight</option>
+                <option value="paper">Paper</option>
+                <option value="terminal">Terminal</option>
+              </select>
+            </div>
 
             <div className="settings-row">
               <div className="settings-label">

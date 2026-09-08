@@ -154,15 +154,117 @@ def test_test_webhook_rejects_truncated_id(backend):
 # test_webhook — live network exercise (404 path)
 # ----------------------------------------------------------------------
 
+# Markers that mean the backend reached Discord and got a definitive,
+# non-transient answer. Retrying any of these is pointless.
+_DEFINITIVE_MARKERS = [
+    "doesn't match any live webhook",  # 404 hint
+    "Cloudflare/Discord rejected",     # 403 hint after fallbacks
+    "token is invalid",                # 401 hint
+    "rate-limited",                    # 429 hint
+    "HTTP 400 ",                       # generic-code hint w/ body
+    "HTTP 5",                          # 5xx hints
+]
+# Transient failures only — a network blip under full-suite load. Worth one
+# retry; a definitive answer is not. Transport-level errors (resets, timeouts,
+# DNS, TLS interference) can never prove the friendly-404 path, so they retry
+# instead of assert. HTTP-code strings never contain these tokens, so the
+# match can't swallow a real 404/401/403/429 diagnostic.
+_TRANSIENT_MARKERS = [
+    "Network error",              # URLError hint from _send_webhook
+    "WinError",                   # TCP reset/refused (Cloudflare closing)
+    "timed out",
+    "timeout",
+    "[SSL:",                       # TLS-level failure (bad record MAC etc)
+    "sslv3",
+    "SSLV3",
+    "gaierror",                    # DNS
+]
+
+
+class _TransportOnlyFailure(TimeoutError):
+    """Every attempt died at the transport layer — the HTTP code path was
+    never exercised, so the environment (not the backend) is at fault."""
+
+
+def _network_reachable(host="discord.com", timeout=2.0):
+    """Cheap probe so we skip (not fail) when there's genuinely no network."""
+    import socket
+    try:
+        socket.create_connection((host, 443), timeout=timeout).close()
+        return True
+    except OSError:
+        return False
+
+
+def _send_webhook_with_retry(proc, attempts=3, backoff=2.0):
+    """
+    Drive one test_webhook round trip, retrying ONLY transient conditions.
+
+    The backend itself never retries its own send (404 = resource gone, no
+    fallback chain in _send_webhook), so a slow Discord/Cloudflare answer or
+    a dropped connection under full-suite load surfaces as a harness
+    TimeoutError, the "Network error" marker, or a bare transport error
+    (WinError 10054 reset etc). All of those are retried up to `attempts`
+    times with `backoff` sleep between tries.
+
+    A definitive HTTP diagnostic (404/401/403/429/4xx/5xx marker) or a raw
+    urllib HTTPError leak returns/fails immediately — the friendly-404
+    assertion is never weakened by the retry. If every attempt dies at the
+    transport layer without one HTTP answer, raises _TransportOnlyFailure so
+    the test can skip: a TCP reset proves nothing about the backend code.
+    """
+    last_err = None
+    for attempt in range(1, attempts + 1):
+        try:
+            resp = _send(proc, "test_webhook", {"url": FAKE_BUT_VALID_URL},
+                         req_id=200 + attempt)
+        except TimeoutError as e:
+            last_err = f"harness timeout on attempt {attempt}: {e}"
+            time.sleep(backoff)
+            continue
+        err = resp.get("data", {}).get("error", "") or ""
+        if err in ["HTTP Error 404: Not Found", "HTTP Error 403: Forbidden",
+                   "HTTP Error 401: Unauthorized"]:
+            raise AssertionError(
+                f"Backend is running stale code — raw HTTPError str escaped "
+                f"on attempt {attempt}: {err!r}"
+            )
+        if any(m in err for m in _DEFINITIVE_MARKERS):
+            return err
+        if any(m in err for m in _TRANSIENT_MARKERS):
+            last_err = f"transient ({err!r}) on attempt {attempt}"
+            time.sleep(backoff)
+            continue
+        # Unknown answer shape — surface it, don't swallow it in retries.
+        return err
+    raise _TransportOnlyFailure(
+        f"test_webhook never produced an HTTP answer after {attempts} "
+        f"attempts — every try failed at the transport layer. "
+        f"Last failure: {last_err}"
+    )
+
+
 def test_test_webhook_fake_id_returns_friendly_404(backend):
     """
     Send a syntactically-valid URL whose ID is statistically guaranteed not
     to exist. Discord returns 404. Our NEW code must produce the friendly
     "webhook was deleted, URL was truncated, or stale URL" diagnostic —
     NOT the bare "HTTP Error 404: Forbidden" that escaped before.
+
+    Flake history: under full-suite load the single attempt could time out
+    against Cloudflare/Discord (or drop mid-request), failing the test even
+    though the backend code is correct. Retries are limited to transient
+    failures (harness timeout, network error) — a real HTTP diagnostic still
+    asserts on the first answer. A hard no-network environment skips instead.
     """
-    resp = _send(backend, "test_webhook", {"url": FAKE_BUT_VALID_URL})
-    err = resp.get("data", {}).get("error", "") or ""
+    if not _network_reachable():
+        pytest.skip("no network route to discord.com — skipping live 404 check")
+
+    try:
+        err = _send_webhook_with_retry(backend)
+    except _TransportOnlyFailure as e:
+        pytest.skip(f"Discord/Cloudflare refused every connection at the "
+                    f"transport layer — cannot exercise the 404 code path: {e}")
     # Accept any of these as proof the new code path handled the response.
     # All of them are strings ONLY the new RuntimeError-wrapping code
     # produces; the old code would have leaked "HTTP Error NNN: ..." verbatim.

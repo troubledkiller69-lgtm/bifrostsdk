@@ -1,5 +1,33 @@
 # BIFROST SDK — Changelog
 
+## 4.1.0 — Stealth v2, Themes, Access Diagnostics (2026-09)
+
+### Access pipeline (stealth v2)
+
+- Driver Hunter removed entirely (page, `core/hunter/`, hunt IPC channels/commands, tests).
+- No more AUTO fallback ladder. Transports are explicit: `auto` == direct attach; `hijack`, `driver`, `cr3` are opt-ins. Kernel modes never fire implicitly.
+- Every StealthReader connect self-tests with a probe read of KUSER_SHARED_DATA and records ordered `attach_steps`; failures raise with the failing step named, and `gui_bridge` falls back to direct only with a log line saying so.
+- New `dump-access` streaming event (contract `events.access`): attach resolution — requested mode, resolved transport, probe result, step trace, latency — rendered as an Access panel on the Dump page.
+- "Re-dump <target>" one-click on the Dump page re-runs the last dump with the current access mode.
+- Access-mode UI relabeled (`auto/direct/hijack/driver/cr3`, legacy `extreme` session value migrates to `cr3`).
+
+### Themes & visuals
+
+- Theme system over the existing token set: Midnight (dark, default), Paper (light), Terminal (CRT mono). Picker in Settings, persisted, applied before first paint to avoid flashes.
+- Radius tokens tightened (6/4/8), hardcoded banner/status colors migrated to tokens so every theme renders correctly.
+
+### Output tooling
+
+- `scripts/verify_output.py`: schema-validate `offsets.json` against `contracts/sdk_output_schema.json`, report zero-field/collision classes, optional header sanity pass. Exit 0/1/2.
+- `scripts/compare_dumps.py`: offset-drift watcher between two dumps — added/removed/changed classes with per-field hex diffs; exit code for CI gates.
+- `tests/test_output_validation.py` (20 tests) covers both.
+- Caught a real defect on first run: shipped CS2 dump `_meta` totals (3224/16428) disagree with actual file contents (2779/14772) — stale meta on disk, validator now flags it.
+
+### Engines & docs
+
+- `docs/ENGINE_GUIDE.md` + `engines/template/` scaffold: step-by-step path for adding a new engine family (registry, detection, output contract, tests).
+- Live webhook 404 test no longer flakes: transport-level failures retry with backoff; real HTTP responses assert immediately; all-transport failure skips instead of failing the suite.
+
 ## 4.0.0 — Rebrand + Full Rework (2026-09)
 
 Complete re-evaluation of the codebase. Brand consolidated to BIFROST SDK everywhere (the Ouroboros naming is gone from code, packaging, and persisted state).

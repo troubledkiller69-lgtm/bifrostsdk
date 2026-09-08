@@ -1,9 +1,11 @@
 /* ══════════════════════════════════════════════════════════
-   BIFROST — MODERN DARK / EMERALD (flat, hairline, minimal)
-   Palette unchanged. Removed: gradients, glows, glass blur,
-   drop shadows, shimmer/pulse motion, lift-on-hover.
-   Elevation = 1px hairlines + surface deltas only.
+   BIFROST — DESIGN SYSTEM
+   Flat, hairline, minimal. Elevation = 1px hairlines +
+   surface deltas only. All colors flow through tokens below;
+   themes swap the token block, components never hardcode.
    ══════════════════════════════════════════════════════════ */
+
+/* ── Midnight (default, dark) ────────────────────────────── */
 
 :root {
   /* ── Surfaces (unchanged values) ── */
@@ -64,9 +66,9 @@
 
 /* ── Static Design Tokens ────────────────────────────── */
 :root {
-  --radius: 8px;
-  --radius-sm: 6px;
-  --radius-lg: 10px;
+  --radius: 6px;
+  --radius-sm: 4px;
+  --radius-lg: 8px;
   --radius-pill: 100px;
 
   --font: -apple-system, 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
@@ -847,6 +849,83 @@ html, body, #root {
 .log-line.error { color: var(--error); }
 .log-line.warn { color: var(--warn); }
 .log-line.dim { color: var(--text-muted); }
+
+/* ── Access Panel (attach resolution) ─────────────────── */
+
+.access-panel {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--border-active);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.access-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.access-tag {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--text-muted);
+}
+
+.access-transport {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.access-dim {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.access-ms {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.access-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex: none;
+}
+
+.access-dot.ok { background: var(--success); }
+.access-dot.warn { background: var(--warn); }
+.access-dot.bad { background: var(--error); }
+
+.access-steps {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.access-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.access-step-name {
+  font-weight: 600;
+  color: var(--text-primary);
+  min-width: 140px;
+}
 
 /* ── Results Tree ────────────────────────────────────── */
 
@@ -1629,4 +1708,90 @@ html, body, #root {
 .tab-strip button.active {
   color: var(--accent);
   border-bottom-color: var(--accent);
+}
+
+/* ----------------------------------------------------------
+   THEMES - applied on <html data-theme="..."> by App state.
+   Midnight is the :root default above; these blocks only
+   override the palette on the same element (later in source).
+   ---------------------------------------------------------- */
+
+/* -- Paper (light) ---------------------------------------- */
+[data-theme='paper'] {
+  --bg-base: #F2F1EE;
+  --bg-surface: #E9E8E4;
+  --bg-card: #FBFAF8;
+  --bg-elevated: #FFFFFF;
+  --bg-input: #E6E5E1;
+  --bg-overlay: rgba(20, 20, 18, 0.55);
+
+  --text-primary: #1B1B18;
+  --text-secondary: #4B4A45;
+  --text-muted: #8B8981;
+  --text-ghost: #C6C4BC;
+
+  --accent: #0F8A68;
+  --accent-soft: rgba(15, 138, 104, 0.12);
+  --accent-hover: #0B7155;
+
+  --success: #12805C;
+  --success-soft: rgba(18, 128, 92, 0.12);
+  --error: #C03A3A;
+  --error-soft: rgba(192, 58, 58, 0.10);
+  --warn: #A8711B;
+  --warn-soft: rgba(168, 113, 27, 0.12);
+  --info: #1D6FA8;
+  --info-soft: rgba(29, 111, 168, 0.10);
+
+  --border: rgba(20, 20, 18, 0.10);
+  --border-hover: rgba(20, 20, 18, 0.20);
+  --border-active: rgba(15, 138, 104, 0.55);
+
+  --shadow-md: 0 1px 0 rgba(20, 20, 18, 0.08);
+  --shadow-lg: 0 8px 24px rgba(20, 20, 18, 0.16);
+
+  --gradient-btn-hover: #EFEEE9;
+  --scrollbar-thumb: #C9C7C1;
+  --scrollbar-hover: #A8A69F;
+  --console-bg: #F0EFEB;
+}
+
+/* -- Terminal (CRT green-on-black, mono body) --------------- */
+[data-theme='terminal'] {
+  --bg-base: #090B09;
+  --bg-surface: #0D100D;
+  --bg-card: #111511;
+  --bg-elevated: #161B16;
+  --bg-input: #0B0E0B;
+  --bg-overlay: rgba(0, 0, 0, 0.6);
+
+  --text-primary: #CBD8C4;
+  --text-secondary: #8AA081;
+  --text-muted: #5C6E57;
+  --text-ghost: #2E3B2C;
+
+  --accent: #3DDC6A;
+  --accent-soft: rgba(61, 220, 106, 0.12);
+  --accent-hover: #5FF08A;
+
+  --success: #3DDC6A;
+  --success-soft: rgba(61, 220, 106, 0.10);
+  --error: #FF5C5C;
+  --error-soft: rgba(255, 92, 92, 0.10);
+  --warn: #FFB020;
+  --warn-soft: rgba(255, 176, 32, 0.10);
+  --info: #5FA8FF;
+  --info-soft: rgba(95, 168, 255, 0.10);
+
+  --border: rgba(110, 220, 130, 0.14);
+  --border-hover: rgba(110, 220, 130, 0.28);
+  --border-active: rgba(61, 220, 106, 0.55);
+
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.65);
+
+  --font: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  --gradient-btn-hover: #1C221C;
+  --scrollbar-thumb: #1F2A1F;
+  --scrollbar-hover: #2F3E2F;
+  --console-bg: #080A08;
 }

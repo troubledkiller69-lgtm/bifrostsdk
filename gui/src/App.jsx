@@ -65,6 +65,13 @@ function saveSession(key, value) {
   localStorage.setItem(`bifrost_${key}`, JSON.stringify(value));
 }
 
+// Apply theme before first paint (no flash from the :root default).
+{
+  const t = loadSession('theme', 'midnight');
+  document.documentElement.setAttribute('data-theme',
+    ['midnight', 'paper', 'terminal'].includes(t) ? t : 'midnight');
+}
+
 export default function App() {
   const [page, setPage] = useState(() => loadSession('page', 'engines'));
   const [stealth, setStealth] = useState(() => {
@@ -74,6 +81,10 @@ export default function App() {
     return ['auto', 'direct', 'hijack', 'driver', 'cr3'].includes(saved) ? saved : 'auto';
   });
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [theme, setTheme] = useState(() => {
+    const saved = loadSession('theme', 'midnight');
+    return ['midnight', 'paper', 'terminal'].includes(saved) ? saved : 'midnight';
+  });
 
   const [selectedEngine, setSelectedEngine] = useState(() => loadSession('engine', null));
   const [selectedProcess, setSelectedProcess] = useState(() => loadSession('process', null));
@@ -86,12 +97,18 @@ export default function App() {
   // knows to restart the Python subprocess.
   const [staleBackend, setStaleBackend] = useState(false);
   const [dumpOptions, setDumpOptions] = useState({ forceDiscovery: true, regenerate: false });
+  const [accessInfo, setAccessInfo] = useState(null);
+  const [lastDump, setLastDump] = useState(() => loadSession('lastDump', null));
 
   const api = window.bifrost;
 
   // Persist session state
   useEffect(() => { saveSession('page', page); }, [page]);
   useEffect(() => { saveSession('stealth', stealth); }, [stealth]);
+  useEffect(() => {
+    saveSession('theme', theme);
+    document.documentElement.setAttribute('data-theme', theme);
+  }, [theme]);
   useEffect(() => { saveSession('engine', selectedEngine); }, [selectedEngine]);
   useEffect(() => { saveSession('process', selectedProcess); }, [selectedProcess]);
   useEffect(() => { saveSession('dumpResults', dumpResults); }, [dumpResults]);
@@ -154,6 +171,12 @@ export default function App() {
     });
     unsubs.push(unsubError);
 
+    const unsubAccess = api.onDumpAccess((msg) => {
+      lastDumpEventRef.current = Date.now();
+      if (msg?.type === 'access' && msg.data) setAccessInfo(msg.data);
+    });
+    unsubs.push(unsubAccess);
+
     const unsubComplete = api.onDumpComplete((msg) => {
       lastDumpEventRef.current = Date.now();
       setDumpProgress(p => ({ ...p, running: false }));
@@ -180,25 +203,43 @@ export default function App() {
     };
   }, [api, addLog]);
 
-  const startDump = useCallback(() => {
-    if (!api || !selectedEngine || !selectedProcess) return;
+  const runDumpTarget = useCallback((target) => {
+    if (!api || !target) return;
+    const { engine: eng, pid: procPid, name: procName } = target;
     setDumpProgress({ stage: 'Initializing...', pct: 0, running: true });
     setLogs([]);
+    setAccessInfo(null);
     lastDumpEventRef.current = Date.now();
     stallWarnedRef.current = false;
-    
+
     const settings = loadSession('settings', {});
-    
+
     api.startDump({
-      engine: selectedEngine,
-      pid: selectedProcess.pid,
-      name: selectedProcess.name,
+      engine: eng,
+      pid: procPid,
+      name: procName,
       stealth,
       webhook: (settings.discordWebhook || '').trim(),
       force_discovery: dumpOptions.forceDiscovery,
       regenerate: dumpOptions.regenerate,
     });
-  }, [api, selectedEngine, selectedProcess, stealth, dumpOptions]);
+  }, [api, stealth, dumpOptions]);
+
+  const startDump = useCallback(() => {
+    if (!selectedEngine || !selectedProcess) return;
+    setLastDump({
+      engine: selectedEngine,
+      pid: selectedProcess.pid,
+      name: selectedProcess.name,
+    });
+    runDumpTarget({
+      engine: selectedEngine,
+      pid: selectedProcess.pid,
+      name: selectedProcess.name,
+    });
+  }, [selectedEngine, selectedProcess, runDumpTarget]);
+
+  useEffect(() => { saveSession('lastDump', lastDump); }, [lastDump]);
 
   const stopDump = useCallback(() => {
     if (!api) return;
@@ -281,6 +322,9 @@ export default function App() {
             onStop={stopDump}
             dumpOptions={dumpOptions}
             setDumpOptions={setDumpOptions}
+            accessInfo={accessInfo}
+            lastDump={lastDump}
+            onRedump={() => runDumpTarget(lastDump)}
           />
         );
       case 'results':
@@ -306,7 +350,7 @@ export default function App() {
       case 'config':
         return <ConfigEditorPage />;
       case 'settings':
-        return <SettingsPage />;
+            return <SettingsPage theme={theme} setTheme={setTheme} />;
       default:
         return null;
     }
@@ -328,9 +372,9 @@ export default function App() {
         {staleBackend && (
           <div style={{
             padding: '10px 16px',
-            background: 'rgba(245, 166, 35, 0.12)',
-            borderBottom: '1px solid #f5a623',
-            color: '#f5a623',
+            background: 'var(--warn-soft)',
+            borderBottom: '1px solid var(--warn)',
+            color: 'var(--warn)',
             fontSize: 12,
             fontWeight: 600,
             display: 'flex',
@@ -339,7 +383,7 @@ export default function App() {
           }}>
             <span style={{
               width: 7, height: 7, borderRadius: '50%',
-              background: '#f5a623', flexShrink: 0,
+              background: 'var(--warn)', flexShrink: 0,
             }} />
             <span>
               Backend code has been updated but the running Python subprocess

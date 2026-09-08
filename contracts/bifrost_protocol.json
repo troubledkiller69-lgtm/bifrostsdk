@@ -176,12 +176,12 @@
         "engine": "string (e.g. 'source', 'unreal5', 'blizzard', 'unity_mono')",
         "pid": "number",
         "name": "string (exe name)",
-        "stealth": "string enum (auto | driver | hijack | direct)",
+        "stealth": "string enum (auto | driver | hijack | direct | cr3)",
         "webhook": "string (optional url)",
         "force_discovery": "boolean",
         "regenerate": "boolean"
       },
-      "events_emitted": ["dump-log", "dump-progress", "dump-complete", "dump-error"],
+      "events_emitted": ["dump-log", "dump-progress", "dump-complete", "dump-error", "dump-access"],
       "notes": "Long-running. Triggers run_dump in gui_bridge -> engine dumper. Cancellable via CANCEL_EVENT."
     },
     "spoof": {
@@ -250,6 +250,23 @@
       },
       "routing": "main.js routes by stream tag to <op>-complete; on data.error also to <op>-error",
       "notes": "Final payload for streaming operations."
+    },
+    "access": {
+      "type": "access",
+      "payload": {
+        "data": {
+          "requested": "string (stealth mode requested)",
+          "transport": "string (mode actually used)",
+          "method_name": "string (human label)",
+          "probed": "boolean (self-test read passed)",
+          "fallback": "boolean (kernel mode failed -> direct)",
+          "ms": "number (attach duration)",
+          "steps": "array of {step: string, ok: boolean, detail: string}"
+        },
+        "stream": "string (operation tag)"
+      },
+      "routing": "main.js routes by stream tag to <op>-access",
+      "notes": "Attach resolution for a dump: requested mode, resolved transport, self-test result, failing-step chain."
     },
     "error": {
       "type": "error",

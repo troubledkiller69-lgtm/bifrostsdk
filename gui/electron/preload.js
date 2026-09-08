@@ -31,6 +31,11 @@ contextBridge.exposeInMainWorld('bifrost', {
     ipcRenderer.on('dump-progress', handler);
     return () => ipcRenderer.removeListener('dump-progress', handler);
   },
+  onDumpAccess: (cb) => {
+    const handler = (_, data) => cb(data);
+    ipcRenderer.on('dump-access', handler);
+    return () => ipcRenderer.removeListener('dump-access', handler);
+  },
   onDumpLog: (cb) => {
     const handler = (_, data) => cb(data);
     ipcRenderer.on('dump-log', handler);
@@ -110,7 +115,7 @@ contextBridge.exposeInMainWorld('bifrost', {
     // Restrict to known streaming channels only — prevents renderer from
     // removing listeners on arbitrary Electron IPC channels
     const ALLOWED_CHANNELS = [
-      'dump-progress', 'dump-log', 'dump-error', 'dump-complete',
+      'dump-progress', 'dump-log', 'dump-error', 'dump-complete', 'dump-access',
       'spoof-progress', 'spoof-log', 'spoof-error', 'spoof-complete',
       'analyze-progress', 'analyze-log', 'analyze-error', 'analyze-complete',
     ];

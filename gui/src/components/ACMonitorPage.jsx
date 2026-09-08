@@ -94,7 +94,7 @@ export default function ACMonitorPage() {
               <div className="ac-card-name">{ac.name}</div>
               <div className="ac-card-status">
                 <span className={`dot ${info.running ? 'running' : 'stopped'}`} />
-                <span style={{ color: info.running ? '#ef4444' : 'var(--text-muted)' }}>
+                <span style={{ color: info.running ? 'var(--error)' : 'var(--text-muted)' }}>
                   {info.running ? 'ACTIVE' : 'Not Found'}
                 </span>
               </div>

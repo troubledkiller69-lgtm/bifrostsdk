@@ -3,7 +3,7 @@ import sys
 import os
 import threading
 
-_BUILD_STAMP = "4.0.0"
+_BUILD_STAMP = "4.1.0"
 
 # Streaming ops run on worker threads (see _stream_worker). Only one may run
 # at a time — the loop rejects a second streaming command with BUSY.
