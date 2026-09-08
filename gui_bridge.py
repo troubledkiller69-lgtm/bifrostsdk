@@ -811,14 +811,20 @@ def run_dump(args):
         _op_end("ok", f"{dumper.progress.classes_found} classes, "
                       f"{dumper.progress.fields_found} fields")
 
-        # Discord webhook notification
+        # Discord webhook notification — always say something: a silent
+        # backend looks like a broken feature. Success names the attached
+        # file; failure carries Discord's response body.
         if webhook_url:
+            attach_path = result_data.get("json", "")
             try:
-                _send_webhook(webhook_url, result_data,
-                              attach_path=result_data.get("json", ""))
-                _log("Discord webhook sent")
+                _send_webhook(webhook_url, result_data, attach_path=attach_path)
+                name = os.path.basename(attach_path) if attach_path and os.path.isfile(attach_path) else "(embed only)"
+                _log(f"Discord webhook sent — attachment: {name}")
             except Exception as wh_err:
                 _log(f"Webhook failed: {wh_err}", "warn")
+        else:
+            _log("No webhook configured — set a Discord webhook in Settings "
+                 "to get dump notifications")
 
     except Exception as e:
         # Single terminal signal. Traceback detail goes to stderr (the dev

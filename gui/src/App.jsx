@@ -280,7 +280,13 @@ export default function App() {
           />
         );
       case 'results':
-        return <ResultsPage data={dumpResults} setPage={setPage} />;
+        return (
+          <ResultsPage
+            data={dumpResults}
+            setPage={setPage}
+            setDumpResults={setDumpResults}
+          />
+        );
       case 'spoofer':
         return <SpooferPage />;
       case 'hunter':

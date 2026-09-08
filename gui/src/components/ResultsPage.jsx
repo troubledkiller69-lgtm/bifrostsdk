@@ -56,10 +56,42 @@ function formatAsCppHeader(data) {
   return lines.join('\n');
 }
 
-export default function ResultsPage({ data, setPage }) {
+export default function ResultsPage({ data, setPage, setDumpResults }) {
   const [activeClass, setActiveClass] = useState(null);
   const [exportMsg, setExportMsg] = useState('');
   const [copied, setCopied] = useState(false);
+  const [loadMsg, setLoadMsg] = useState('');
+
+  // Recover from a lost live result: pick the offsets.json on disk and
+  // rebuild a summary view from its _meta. Fixes the "dump said done but
+  // the page is empty" case (backend restart, page opened late, ...).
+  const loadFromDisk = async () => {
+    const api = window.bifrost;
+    if (!api?.loadJsonFile) return;
+    try {
+      const res = await api.loadJsonFile();
+      if (!res?.data || res.cancelled) return;
+      const meta = res.data._meta || {};
+      const offsets = res.data.offsets || {};
+      const totalFields = Object.values(offsets).reduce(
+        (acc, entry) => acc + (entry && entry.fields ? Object.keys(entry.fields).length : 0),
+        0
+      );
+      const summary = {
+        classes: meta.total_classes ?? Object.keys(offsets).length,
+        fields: meta.total_fields ?? totalFields,
+        engine: meta.engine || '',
+        headers: [],
+        json: res.filename,
+      };
+      if (setDumpResults) setDumpResults(summary);
+      setLoadMsg(`Loaded ${res.filename}`);
+      setTimeout(() => setLoadMsg(''), 4000);
+    } catch (err) {
+      setLoadMsg('Failed to read that file');
+      setTimeout(() => setLoadMsg(''), 4000);
+    }
+  };
 
   const copyToClipboard = (format) => {
     let content;
@@ -139,14 +171,22 @@ export default function ResultsPage({ data, setPage }) {
           <div className="page-subtitle">Dumped offsets will appear here after a scan completes</div>
         </div>
         <div className="log-console" style={{ textAlign: 'center', padding: 40 }}>
-          <p className="log-line dim">No results yet. Run a dump to see offsets here.</p>
-          <button
-            className="btn btn-primary"
-            style={{ marginTop: 16 }}
-            onClick={() => setPage('dump')}
-          >
-            Go to Dump
-          </button>
+          <p className="log-line dim">No live results. If a dump just finished, its files are on disk — load the offsets.json to view the summary.</p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'center', marginTop: 12 }}>
+            <button
+              className="btn btn-primary"
+              onClick={() => setPage('dump')}
+            >
+              Go to Dump
+            </button>
+            <button
+              className="btn btn-secondary"
+              onClick={loadFromDisk}
+            >
+              Load offsets.json from disk
+            </button>
+            {loadMsg && <p className="log-line dim">{loadMsg}</p>}
+          </div>
         </div>
       </>
     );
