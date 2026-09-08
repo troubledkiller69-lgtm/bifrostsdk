@@ -671,6 +671,7 @@ def run_dump(args):
     reader = None
     stealth_config = None
     attach_info = None
+    attach_emitted = False
 
     try:
         # Transport pick. 'auto' (and anything unknown) means direct — the
@@ -736,12 +737,7 @@ def run_dump(args):
         attach_info["ms"] = int((time.time() - _t_attach) * 1000)
         # Surface attach resolution as a structured event (contract: events.access)
         emit({"type": "access", "data": attach_info})
-    except Exception as e:
-        if attach_info is not None:
-            attach_info["fallback"] = True
-            attach_info["ms"] = int((time.time() - _t_attach) * 1000)
-            emit({"type": "access", "data": attach_info})
-        raise
+        attach_emitted = True
 
         # Auto-detect engine
         if engine == "auto":
@@ -870,6 +866,13 @@ def run_dump(args):
                  "to get dump notifications")
 
     except Exception as e:
+        # Attach failures never reached the success emit above — surface the
+        # resolution state so the Access panel shows why the dump died.
+        if attach_info is not None and not attach_emitted:
+            attach_info["fallback"] = True
+            attach_info["ms"] = int((time.time() - _t_attach) * 1000)
+            attach_info.setdefault("steps", [{"step": "attach", "ok": False, "detail": str(e)}])
+            emit({"type": "access", "data": attach_info})
         # Single terminal signal. Traceback detail goes to stderr (the dev
         # console); the GUI gets one error line via the result mirror.
         # The deepest stack frame rides along in the message so failures on
