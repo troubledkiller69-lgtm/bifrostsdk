@@ -69,28 +69,6 @@ contextBridge.exposeInMainWorld('bifrost', {
     return () => ipcRenderer.removeListener('spoof-complete', handler);
   },
 
-  startHunt: (opts) => ipcRenderer.send('start-hunt', opts),
-  onHuntLog: (cb) => {
-    const handler = (_, data) => cb(data);
-    ipcRenderer.on('hunt-log', handler);
-    return () => ipcRenderer.removeListener('hunt-log', handler);
-  },
-  onHuntError: (cb) => {
-    const handler = (_, data) => cb(data);
-    ipcRenderer.on('hunt-error', handler);
-    return () => ipcRenderer.removeListener('hunt-error', handler);
-  },
-  onHuntProgress: (cb) => {
-    const handler = (_, data) => cb(data);
-    ipcRenderer.on('hunt-progress', handler);
-    return () => ipcRenderer.removeListener('hunt-progress', handler);
-  },
-  onHuntComplete: (cb) => {
-    const handler = (_, data) => cb(data);
-    ipcRenderer.on('hunt-complete', handler);
-    return () => ipcRenderer.removeListener('hunt-complete', handler);
-  },
-
   startAnalyze: (opts) => ipcRenderer.send('start-analyze', opts),
   stopAnalyze: () => ipcRenderer.send('stop-analyze'),
   startAnalyzeExport: (opts) => ipcRenderer.send('start-analyze-export', opts),
@@ -134,7 +112,6 @@ contextBridge.exposeInMainWorld('bifrost', {
     const ALLOWED_CHANNELS = [
       'dump-progress', 'dump-log', 'dump-error', 'dump-complete',
       'spoof-progress', 'spoof-log', 'spoof-error', 'spoof-complete',
-      'hunt-progress', 'hunt-log', 'hunt-error', 'hunt-complete',
       'analyze-progress', 'analyze-log', 'analyze-error', 'analyze-complete',
     ];
     if (ALLOWED_CHANNELS.includes(channel)) {

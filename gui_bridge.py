@@ -5,7 +5,7 @@ Backend for the Electron app. Called by api_server.py via stdin/stdout JSON IPC.
 The shapes emitted via the `emit` hook (log, progress, result) are defined in
 contracts/bifrost_protocol.json under the "events" section.
 
-All long-running operations (dump, spoof, generate, hunt) and the normal
+All long-running operations (dump, spoof, generate, analyze) and the normal
 command surface are also governed by that protocol document.
 """
 
@@ -672,29 +672,38 @@ def run_dump(args):
     stealth_config = None
 
     try:
-        if stealth_mode == "direct":
+        # Transport pick. 'auto' (and anything unknown) means direct — the
+        # only transport verified end to end here. Kernel transports map a
+        # vulnerable driver; they are explicit opt-ins, never a default.
+        transport = stealth_mode if stealth_mode in (
+            "direct", "hijack", "driver", "cr3", "extreme") else "direct"
+        if transport == "extreme":
+            transport = "cr3"  # legacy GUI label for the CR3-bypass mode
+
+        if transport == "direct":
             from core.memory import MemoryReader
-            _log("Access: Direct (no stealth)")
+            if stealth_mode in (None, "", "auto"):
+                _log("Access: Direct (auto) — kernel transports are explicit opt-ins")
+            else:
+                _log("Access: Direct (no stealth)")
             reader = MemoryReader(pid=pid)
+            stealth_config = None
         else:
             try:
                 from core.stealth import StealthReader
                 from core.stealth.config import AccessMethod, StealthConfig
 
                 method_map = {
-                    "auto": AccessMethod.AUTO,
-                    "driver": AccessMethod.DRIVER,
                     "hijack": AccessMethod.HIJACK,
-                    "direct": AccessMethod.DIRECT,
+                    "driver": AccessMethod.DRIVER,
+                    "cr3": AccessMethod.CR3,
                 }
-                method = method_map.get(stealth_mode, AccessMethod.AUTO)
-                stealth_config = StealthConfig(method=method)
-
-                _log(f"Access: Stealth ({stealth_mode})")
+                stealth_config = StealthConfig(method=method_map[transport])
+                _log(f"Access: Stealth ({transport})")
                 reader = StealthReader(pid=pid, config=stealth_config)
-                _log(f"Connected via: {reader.method_name}")
+                _log(f"Connected via: {reader.method_name} (probe verified)")
             except Exception as e:
-                _log(f"Stealth attach failed: {e}", "warn")
+                _log(f"Stealth ({transport}) attach failed: {e}", "warn")
                 _log("Falling back to direct attach...", "warn")
                 from core.memory import MemoryReader
                 reader = MemoryReader(pid=pid)
@@ -924,24 +933,6 @@ def run_generate(args):
         _op_end("error", f"generation failed: {e}")
         _log(f"Generator error: {e}", "error")
         emit({"type": "result", "data": {"success": False, "error": str(e)}})
-
-
-def run_hunt(args):
-    _op_begin("hunt", {"max_drivers": args.get("max_drivers") or 100})
-    try:
-        from core.hunter.hunter import DriverHunter
-
-        _log("Starting Vulnerable Driver Hunt...")
-        hunter = DriverHunter()
-        hunter.set_logger(lambda msg: _log(msg))
-        max_drivers = min(int(args.get("max_drivers", 100)), 500)
-        results = hunter.start_hunt(max_drivers=max_drivers)
-        emit({"type": "result", "data": results})
-        _op_end("ok", f"hunt finished ({len(results) if isinstance(results, list) else '?'} hits)")
-    except Exception as e:
-        _op_end("error", f"hunt failed: {e}")
-        _log(f"Hunter error: {e}", "error")
-        emit({"type": "result", "data": {"error": str(e)}})
 
 
 def run_read_memory(args):

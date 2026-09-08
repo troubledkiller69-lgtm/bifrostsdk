@@ -3,11 +3,10 @@ BIFROST SDK — Stealth Memory Reader
 Drop-in replacement for core.memory.MemoryReader that routes reads
 through kernel-level access methods to evade anti-cheat detection.
 
-Access hierarchy for AUTO (tries in order):
-  1. Manual page-table walk over physical reads (CR3 brute-force — no handle needed)
-  2. Driver-backed physical memory reads (strongest — no handle needed)
-  3. Handle hijacking from system processes (usermode, but stealthy)
-  4. Direct attach fallback (pymem — only for unprotected games)
+Transports are explicit, never chained: DIRECT (OpenProcess), HIJACK
+(duplicated system handle), DRIVER (mapped vulnerable driver, physical
+reads), CR3 (driver + manual page-table walk). Each one self-tests at
+connect time and reports the exact failing step.
 """
 
 from __future__ import annotations
@@ -18,7 +17,7 @@ import struct
 import os
 from typing import Optional
 
-from .config import AccessMethod, StealthConfig, STEALTH_MEDIUM
+from .config import AccessMethod, StealthConfig
 from .driver import DriverInterface
 from .handle import HandleHijacker
 from .timing import JitteredReader, AdaptiveJitter, TimingStats
@@ -48,7 +47,7 @@ class StealthReader:
         pid: int | None = None,
         config: StealthConfig | None = None,
     ):
-        self._config = config or STEALTH_MEDIUM
+        self._config = config or StealthConfig()
         self._active_method: Optional[AccessMethod] = None
         self._driver: Optional[DriverInterface] = None
         self._cr3: int = 0
@@ -70,6 +69,10 @@ class StealthReader:
             "errors": [],
         }
 
+        # Ordered attach trace: (step, ok, detail). Failure messages carry
+        # this chain so callers see exactly which step died and why.
+        self.attach_steps: list[tuple[str, bool, str]] = []
+
         # Resolve PID
         if pid:
             self._pid = pid
@@ -83,6 +86,9 @@ class StealthReader:
 
         # Establish access
         self._connect(self._config.method, self._config.driver_path or None)
+
+        # Self-test: one real read through the established transport.
+        self._probe_read()
 
         # Setup jitter wrapper
         if self._config.enable_jitter:
@@ -183,119 +189,147 @@ class StealthReader:
                 continue
         return 0
 
-    def _connect(self, method: AccessMethod, driver_path: Optional[str]):
-        """Establish memory access using the specified (or best available) method.
+    def _step(self, name: str, ok: bool, detail: str = ""):
+        """Record one attach step for the failure chain."""
+        self.attach_steps.append((name, ok, detail))
 
-        AUTO is deliberately usermode-only (handle hijack -> direct attach).
-        Kernel access (vulnerable-driver mapping, PT walks, CR3 brute force)
-        can BSOD or trip AV and must be requested explicitly via
-        AccessMethod.DRIVER or AccessMethod.PT_WALKER. AUTO never loads a
-        driver on its own.
-        """
-        methods_to_try = []
+    def _format_failure_chain(self) -> str:
+        parts = []
+        for name, ok, detail in self.attach_steps:
+            if not ok:
+                parts.append(f"{name}: {detail or 'failed'}")
+        return "; ".join(parts)
 
-        if method == AccessMethod.AUTO:
-            methods_to_try = [AccessMethod.HIJACK, AccessMethod.DIRECT]
-        else:
-            methods_to_try = [method]
-
-        for m in methods_to_try:
-            try:
-                if m == AccessMethod.PT_WALKER:
-                    self._connect_pt_walker(driver_path)
-                    self._active_method = AccessMethod.PT_WALKER
-                    self._debug_stats["access_method"] = "PT Walker (Physical CR3)"
-                    return
-                elif m == AccessMethod.DRIVER:
-                    self._connect_driver(driver_path)
-                    self._active_method = AccessMethod.DRIVER
-                    self._debug_stats["driver_available"] = True
-                    self._debug_stats["access_method"] = "Kernel Driver (Physical)"
-                    return
-                elif m == AccessMethod.HIJACK:
-                    self._connect_hijack()
-                    self._active_method = AccessMethod.HIJACK
-                    self._debug_stats["hijack_available"] = True
-                    self._debug_stats["access_method"] = "Handle Hijack"
-                    return
-                elif m == AccessMethod.DIRECT:
-                    self._connect_direct()
-                    self._active_method = AccessMethod.DIRECT
-                    self._debug_stats["direct_available"] = True
-                    self._debug_stats["access_method"] = "Direct Attach"
-                    return
-            except Exception as e:
-                self._debug_stats["errors"].append(f"{m.name} failed: {e}")
-                continue
-
+    def _probe_read(self) -> None:
+        """One real read through the active transport proves it works end
+        to end (handle rights, driver ioctl, CR3 translation)."""
+        probe_addr = 0x7FFE0000  # KUSER_SHARED_DATA — mapped in every process
+        try:
+            data = self._raw_read(probe_addr, 8)
+        except Exception as e:
+            data = b""
+            self._step("read probe", False, str(e))
+        if len(data) == 8:
+            self._step("read probe", True, f"8 bytes at 0x{probe_addr:X}")
+            return
         raise RuntimeError(
-            f"All access methods failed for PID {self._pid}. "
-            "If this is an anti-cheat-protected game, select the 'driver' "
-            "stealth mode explicitly (kernel access is not part of AUTO)."
+            f"{self._config.method.label} failed its read probe for PID "
+            f"{self._pid}"
         )
 
-    def _connect_pt_walker(self, driver_path: Optional[str]):
-        """Use Manual Page Table Walker to bypass CR3 Encryption."""
+    def _connect(self, method: AccessMethod, driver_path: Optional[str]):
+        """Establish the single requested transport and verify it.
+
+        There is no fallback ladder. Each transport records ordered steps
+        into attach_steps; on failure the raised error lists every step
+        with its detail, so a dead kernel attach says which step died
+        (driver map / CR3 resolve / probe) instead of a generic message.
+        """
+        self._active_method = method
+        try:
+            if method == AccessMethod.HIJACK:
+                self._connect_hijack()
+            elif method == AccessMethod.DRIVER:
+                self._connect_driver(driver_path)
+            elif method == AccessMethod.CR3:
+                self._connect_cr3(driver_path)
+            elif method == AccessMethod.DIRECT:
+                self._connect_direct()
+            else:  # defensive — an unknown enum must never silently pass
+                raise RuntimeError(f"Unknown transport: {method}")
+        except Exception as e:
+            chain = self._format_failure_chain()
+            raise RuntimeError(
+                f"{method.label} failed for PID {self._pid}."
+                + (f" Chain: {chain}" if chain else f" {e}")
+            ) from e
+        self._debug_stats["access_method"] = method.label
+
+    def _connect_cr3(self, driver_path: Optional[str]):
+        """Driver + manual page-table walk (CR3 bypass / brute force)."""
         from .pt_walker import PTWalkerReader
-        
-        # DriverInterface maps the vulnerable driver inside __init__.
-        self._driver = DriverInterface(driver_path=driver_path)
-        if not self._driver.is_loaded:
-            raise RuntimeError("DriverInterface failed to map a driver")
-        
-        # We assume base address 0x7FF700000000 for standard Unity/UE5 games.
-        # This allows the PTWalker to brute-force the physical CR3.
+
+        # Records its own steps; raises on the failing one.
+        self._connect_driver(driver_path)
+
+        # 0x7FF700000000 is the assumed image base for standard Unity/UE5
+        # games; the walker brute-forces the physical CR3 from there.
         self._pt_reader = PTWalkerReader(self._pid, self._driver, 0x7FF700000000)
-        
-        # If the cr3 is 0, the brute forcer failed or the driver isn't working
-        if self._pt_reader.cr3 == 0:
+        if not self._pt_reader.cr3:
+            self._step("resolve true cr3", False, "PT walker failed to resolve CR3")
             raise RuntimeError("PTWalker failed to resolve True CR3")
+        self._step("resolve true cr3", True, f"cr3=0x{self._pt_reader.cr3:X}")
 
     def _connect_driver(self, driver_path: Optional[str]):
-        """Load vulnerable driver and get CR3 for target process."""
-        # DriverInterface maps the vulnerable driver inside __init__.
-        self._driver = DriverInterface(driver_path=driver_path)
+        """Load the vulnerable driver and resolve the target's CR3."""
+        try:
+            # DriverInterface maps the vulnerable driver inside __init__.
+            self._driver = DriverInterface(driver_path=driver_path)
+        except Exception as e:
+            self._step("map driver", False, str(e))
+            raise
         if not self._driver.is_loaded:
+            self._step("map driver", False, "driver not loaded after map")
             raise RuntimeError("DriverInterface failed to map a driver")
-        self._cr3 = self._driver.get_process_cr3(self._pid)
-        if self._cr3 == 0:
+        self._step("map driver", True, "driver mapped and loaded")
+        try:
+            self._cr3 = self._driver.get_process_cr3(self._pid)
+        except Exception as e:
+            self._step("resolve cr3", False, str(e))
+            raise
+        if not self._cr3:
+            self._step("resolve cr3", False, f"cr3=0 for PID {self._pid}")
             raise RuntimeError("Failed to resolve CR3 for target process")
+        self._step("resolve cr3", True, f"cr3=0x{self._cr3:X}")
 
     def _connect_hijack(self):
-        """Duplicate a handle from a system process."""
+        """Duplicate a read handle from a system process (csrss last)."""
         hijacker = HandleHijacker()
-        self._handle = hijacker.hijack(
-            self._pid,
-            desired_access=PROCESS_VM_READ | PROCESS_QUERY_INFORMATION,
-        )
+        try:
+            self._handle = hijacker.hijack(
+                self._pid,
+                desired_access=PROCESS_VM_READ | PROCESS_QUERY_INFORMATION,
+            )
+        except Exception as e:
+            self._handle = 0
+            self._step("duplicate handle", False, str(e))
         if not self._handle:
-            # Try csrss specifically
-            self._handle = hijacker.hijack_from_csrss(self._pid)
+            try:
+                self._handle = hijacker.hijack_from_csrss(self._pid)
+            except Exception as e:
+                self._step("duplicate handle (csrss)", False, str(e))
         if not self._handle:
             raise RuntimeError("Handle hijacking failed")
+        self._step("open handle", True, f"handle=0x{self._handle:X}")
 
     def _connect_direct(self):
-        """Standard OpenProcess — fallback only."""
+        """Standard OpenProcess — userspace, no driver involvement."""
         self._handle = k32.OpenProcess(
             PROCESS_VM_READ | PROCESS_QUERY_INFORMATION,
             False,
             self._pid,
         )
         if not self._handle:
+            self._step(
+                "open process", False,
+                f"OpenProcess failed for PID {self._pid} "
+                f"(error {ctypes.get_last_error()})",
+            )
             raise RuntimeError(f"OpenProcess failed for PID {self._pid}")
+        self._step("open process", True, f"handle=0x{self._handle:X}")
 
     # ------------------------------------------------------------------
     # Raw read dispatch
     # ------------------------------------------------------------------
 
     def _raw_read(self, addr: int, size: int) -> bytes:
-        """Route read to active method."""
-        if self._active_method == AccessMethod.PT_WALKER:
+        """Route read to active transport."""
+        if self._active_method == AccessMethod.CR3:
             return self._pt_reader.read_bytes(addr, size)
         elif self._active_method == AccessMethod.DRIVER:
             return self._driver.read_virtual(self._cr3, addr, size)
         else:
-            # Use ReadProcessMemory via handle (hijacked or direct)
+            # Use ReadProcessMemory via handle (direct or hijacked)
             buf = (ctypes.c_byte * size)()
             bytes_read = ctypes.c_size_t(0)
             success = k32.ReadProcessMemory(
@@ -641,8 +675,8 @@ class StealthReader:
     @property
     def method_name(self) -> str:
         names = {
-            AccessMethod.PT_WALKER: "PT Walker (Physical CR3)",
             AccessMethod.DRIVER: "Kernel Driver (Physical)",
+            AccessMethod.CR3: "PT Walker (Physical CR3)",
             AccessMethod.HIJACK: "Handle Hijack",
             AccessMethod.DIRECT: "Direct Attach",
         }
@@ -651,7 +685,9 @@ class StealthReader:
     def close(self):
         if self._driver and self._driver.is_loaded:
             self._driver.unload()
-        if self._handle and self._active_method != AccessMethod.DRIVER:
+        if self._handle and self._active_method in (
+            AccessMethod.DIRECT, AccessMethod.HIJACK,
+        ):
             k32.CloseHandle(self._handle)
             self._handle = 0
 

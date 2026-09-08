@@ -1,13 +1,15 @@
 import React from 'react';
 import logo from '../assets/logo.png';
 
-const STEALTH_MODES = ['auto', 'extreme', 'driver', 'hijack', 'direct'];
+// Access transports, in order of safety. auto == direct; kernel modes
+// (driver, cr3) map a vulnerable driver and must be explicit choices.
+const STEALTH_MODES = ['auto', 'direct', 'hijack', 'driver', 'cr3'];
 const STEALTH_LABELS = {
-  auto: 'Auto',
-  extreme: 'CR3 Bypass',
-  driver: 'Kernel Driver',
-  hijack: 'Handle Hijack',
+  auto: 'Auto (Direct)',
   direct: 'Direct',
+  hijack: 'Handle Hijack',
+  driver: 'Kernel Driver',
+  cr3: 'CR3 Bypass',
 };
 
 const NAV_ITEMS = [
@@ -42,12 +44,6 @@ const NAV_ITEMS = [
     <svg className="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
       <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
       <path d="m9 12 2 2 4-4" />
-    </svg>
-  )},
-  { key: 'hunter', label: 'Driver Hunter', icon: (
-    <svg className="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <circle cx="11" cy="11" r="8" />
-      <line x1="21" y1="21" x2="16.65" y2="16.65" />
     </svg>
   )},
   { type: 'separator', label: 'Tools' },
@@ -101,10 +97,11 @@ const NAV_ITEMS = [
 ];
 
 export default function Sidebar({ page, setPage, stealth, setStealth, bridgeStatus, open, onClose }) {
-  const cycleStealth = () => {
-    const idx = STEALTH_MODES.indexOf(stealth);
-    setStealth(STEALTH_MODES[(idx + 1) % STEALTH_MODES.length]);
-  };
+const cycleStealth = () => {
+  const idx = STEALTH_MODES.indexOf(stealth);
+  const next = idx === -1 ? 'auto' : STEALTH_MODES[(idx + 1) % STEALTH_MODES.length];
+  setStealth(next);
+};
 
   const navigate = (key) => {
     setPage(key);
@@ -170,7 +167,7 @@ export default function Sidebar({ page, setPage, stealth, setStealth, bridgeStat
           </div>
           <div className="stealth-badge" onClick={cycleStealth} title="Click to cycle stealth mode">
             <span className={`stealth-dot ${stealth}`} />
-            <span className="stealth-label">{STEALTH_LABELS[stealth]}</span>
+            <span className="stealth-label">{STEALTH_LABELS[stealth] || STEALTH_LABELS.auto}</span>
           </div>
         </div>
       </div>

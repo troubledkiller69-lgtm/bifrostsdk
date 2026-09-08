@@ -39,7 +39,6 @@ import ProcessesPage from './components/ProcessesPage';
 import DumpPage from './components/DumpPage';
 import ResultsPage from './components/ResultsPage';
 import SpooferPage from './components/SpooferPage';
-import { DriverHunterPage } from './components/DriverHunterPage';
 import DiffPage from './components/DiffPage';
 import MemoryViewerPage from './components/MemoryViewerPage';
 import ACMonitorPage from './components/ACMonitorPage';
@@ -68,7 +67,12 @@ function saveSession(key, value) {
 
 export default function App() {
   const [page, setPage] = useState(() => loadSession('page', 'engines'));
-  const [stealth, setStealth] = useState(() => loadSession('stealth', 'auto'));
+  const [stealth, setStealth] = useState(() => {
+    // Legacy session values: 'extreme' became 'cr3'; unknown -> safe default.
+    const saved = loadSession('stealth', 'auto');
+    if (saved === 'extreme') return 'cr3';
+    return ['auto', 'direct', 'hijack', 'driver', 'cr3'].includes(saved) ? saved : 'auto';
+  });
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const [selectedEngine, setSelectedEngine] = useState(() => loadSession('engine', null));
@@ -226,7 +230,7 @@ export default function App() {
   useEffect(() => {
     const handler = (e) => {
       if (e.ctrlKey && !e.shiftKey && !e.altKey) {
-        const pages = ['engines', 'processes', 'dump', 'results', 'spoofer', 'hunter', 'diff', 'memory', 'acmonitor', 'analyzer', 'diag', 'config', 'settings'];
+        const pages = ['engines', 'processes', 'dump', 'results', 'spoofer', 'diff', 'memory', 'acmonitor', 'analyzer', 'diag', 'config', 'settings'];
         const num = parseInt(e.key);
         if (num >= 1 && num <= pages.length) {
           e.preventDefault();
@@ -289,8 +293,6 @@ export default function App() {
         );
       case 'spoofer':
         return <SpooferPage />;
-      case 'hunter':
-        return <DriverHunterPage />;
       case 'diff':
         return <DiffPage />;
       case 'memory':

@@ -12,7 +12,7 @@ _busy_stream = None
 # Import existing logic
 from gui_bridge import (
     KNOWN_GAME_EXES, list_processes, run_dump, run_spoof, run_spoof_info,
-    run_spoof_restore, run_generate, run_hunt, run_read_memory, run_ac_detect,
+    run_spoof_restore, run_generate, run_read_memory, run_ac_detect,
     run_test_webhook, cancel_operation,
     run_analyze_probe, run_analyze, run_decompile_fn, run_analyze_export,
     run_hexdump_at, run_disasm_at, run_xrefs_at, run_symbols, run_strings,
@@ -93,8 +93,6 @@ def process_command(cmd_line):
                     run_spoof(args)
                 elif command == 'generate':
                     run_generate(args)
-                elif command == 'hunt':
-                    run_hunt(args)
                 elif command == 'analyze':
                     run_analyze(args)
                 elif command == 'analyze_export':

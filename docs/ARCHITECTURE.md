@@ -22,9 +22,9 @@ The renderer talks to the main process through `window.bifrost` — a context-is
 Two communication patterns:
 
 - **Request/Response** — `sendCommand()` with correlation IDs and a timeout (15s default; `decompile_fn` gets 120s — big rz-ghidra bodies are slow). Failures always resolve with a structured error (`{error, code}`); the promise never rejects.
-- **Streaming** — `sendStreamingCommand()` for long-running operations (dump, spoof, generate, hunt, analyze, analyze_export). Each payload carries a `stream` tag; the backend echoes it on every event it emits.
+- **Streaming** — `sendStreamingCommand()` for long-running operations (dump, spoof, generate, analyze, analyze_export). Each payload carries a `stream` tag; the backend echoes it on every event it emits.
 
-**Stream routing** (4.0.0): events route by their `stream` tag to per-operation channels — `dump-log`, `dump-progress`, `dump-complete`, `dump-error`, plus parallel families for spoof/gen/hunt/analyze. `analyze_export` reuses the analyze channels. Before this, every log/result fanned out to all four operations, so a spoof completion could auto-navigate the dump UI to the results page.
+**Stream routing** (4.0.0): events route by their `stream` tag to per-operation channels — `dump-log`, `dump-progress`, `dump-complete`, `dump-error`, plus parallel families for spoof/analyze. `analyze_export` reuses the analyze channels. Before this, every log/result fanned out to all four operations, so a spoof completion could auto-navigate the dump UI to the results page.
 
 **Cancellation** (4.0.0): `stop-dump` sends a `cancel` command; the backend sets a shared `CANCEL_EVENT` that scanners and dump stages check at checkpoints. Analyzer operations have their own stop handlers wired the same way.
 
@@ -39,14 +39,13 @@ The protocol contract lives in `contracts/bifrost_protocol.json` (v1.3). Request
 **Core modules** provide process-agnostic primitives:
 
 - `core/memory.py` — Direct memory reader (pymem). PEB fallback only for the main exe; `module_base` never poisons the cache with the exe base for other modules.
-- `core/stealth/reader.py` — Stealth reader with AUTO fallback chain: PT walker -> driver -> hijack -> direct. Driver-backed paths verify the mapper actually loaded before declaring success.
+- `core/stealth/reader.py` — StealthReader: one explicit transport per instance (`DIRECT`/`HIJACK`/`DRIVER`/`CR3`), no auto fallback ladder. Every connect self-tests with a probe read and records `attach_steps` so failures name the exact step that died. Kernel transports (`DRIVER`/`CR3`) only ever run when explicitly requested; the UI default is direct attach.
 - `core/stealth/driver.py` — Polymorphic IOCTL interface over six vulnerable drivers; CR3/DTB resolution with per-build offset fallbacks; `read_virtual` raises on unmapped pages instead of zero-filling.
 - `core/stealth/pt_walker.py` — Manual PML4->PT walk; page-crossing reads split and translated per page.
 - `core/stealth/spoofer.py` — HWID spoofing across 20 targets in 5 phases, with backup/restore.
 - `core/stealth/handle.py` — Handle hijacking from system processes.
 - `core/scanner.py` — AOB pattern scanner with chunked scanning + cancel checks.
 - `core/signature_generator.py` — Auto-generate AOB patterns from entities.
-- `core/hunter/hunter.py` — Vulnerable-driver hunter (LOLDrivers + catalogs).
 - `core/generator/` — SDKPackage -> C++ headers, schema-validated against `contracts/sdk_output_schema.json`.
 - `core/decomp/` — Analyzer orchestration: rizin-ghidra engine (`rizin_engine.py`), iced-x86 disassembly fallback, module image dumper.
 
@@ -81,7 +80,7 @@ window.bifrost.onDumpComplete(cb)    // receives {type:'result', data:{...}}
 window.bifrost.onDumpError(cb)
 ```
 
-Same pattern for the `spoof`, `gen`, `hunt` and `analyze` operations (log/progress/error/complete each).
+Same pattern for the `spoof`, `gen` and `analyze` operations (log/progress/error/complete each).
 
 ### File Dialogs
 

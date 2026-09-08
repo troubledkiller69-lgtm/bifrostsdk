@@ -1,22 +1,16 @@
 """
 BIFROST SDK — Stealth Memory Subsystem
-Kernel-backed memory access that bypasses usermode AC hooks.
+Explicit, self-testing access transports for target process memory.
 """
 
-from .config import (
-    AccessMethod, StealthLevel, StealthConfig,
-    STEALTH_OFF, STEALTH_LOW, STEALTH_MEDIUM, STEALTH_HIGH,
-    STEALTH_PROFILES, detect_stealth_level,
-)
+from .config import AccessMethod, StealthConfig, STEALTH_OFF
 from .reader import StealthReader
 from .driver import DriverInterface
 from .handle import HandleHijacker
 from .timing import JitteredReader, AdaptiveJitter, TimingStats
 
 __all__ = [
-    "AccessMethod", "StealthLevel", "StealthConfig",
-    "STEALTH_OFF", "STEALTH_LOW", "STEALTH_MEDIUM", "STEALTH_HIGH",
-    "STEALTH_PROFILES", "detect_stealth_level",
+    "AccessMethod", "StealthConfig", "STEALTH_OFF",
     "StealthReader", "DriverInterface", "HandleHijacker",
     "JitteredReader", "AdaptiveJitter", "TimingStats",
 ]

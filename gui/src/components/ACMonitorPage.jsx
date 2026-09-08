@@ -12,7 +12,7 @@ const STEALTH_RECOMMENDATIONS = {
   none: { level: 'DIRECT', desc: 'No anti-cheat detected. Standard memory access is safe.', color: 'var(--success)' },
   light: { level: 'HIJACK', desc: 'Lightweight AC detected. Handle hijacking recommended.', color: 'var(--warn)' },
   heavy: { level: 'DRIVER', desc: 'Kernel-level AC detected. Use driver-based access.', color: 'var(--error)' },
-  extreme: { level: 'CR3 BYPASS', desc: 'Aggressive AC with CR3 monitoring. Use extreme mode.', color: '#ff0040' },
+  extreme: { level: 'CR3', desc: 'Aggressive AC with CR3 monitoring. Use CR3 bypass mode.', color: '#ff0040' },
 };
 
 export default function ACMonitorPage() {

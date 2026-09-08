@@ -25,7 +25,7 @@
     },
     "streaming": {
       "style": "fire-and-forget with stream tag; cancellation via `cancel` command + shared CANCEL_EVENT",
-      "channels": ["start-dump", "start-spoofing", "start-generation", "start-hunt", "start-analyze", "start-analyze-export"],
+      "channels": ["start-dump", "start-spoofing", "start-generation", "start-analyze", "start-analyze-export"],
       "responses": "arrive asynchronously via stdout as typed events tagged with `stream`",
       "cancellation": "renderer sends `cancel` {operation}; backend sets CANCEL_EVENT, operations abort at checkpoints and emit a result with code CANCELLED"
     }
@@ -154,7 +154,7 @@
     "cancel": {
       "direction": "request-response",
       "args": {
-        "operation": "string (dump | spoof | generate | hunt | analyze | analyze_export)"
+        "operation": "string (dump | spoof | generate | analyze | analyze_export)"
       },
       "response": "{status:'ok', cancelled: <operation>}",
       "notes": "Sets the shared CANCEL_EVENT. Streaming operations abort at their next checkpoint."
@@ -194,12 +194,6 @@
       "direction": "fire-and-forget",
       "args": "object (generation options)",
       "events_emitted": ["gen-log", "gen-progress", "gen-complete", "gen-error"],
-      "notes": ""
-    },
-    "hunt": {
-      "direction": "fire-and-forget",
-      "args": "object (hunter options)",
-      "events_emitted": ["hunt-log", "hunt-progress", "hunt-complete", "hunt-error"],
       "notes": ""
     },
     "analyze": {

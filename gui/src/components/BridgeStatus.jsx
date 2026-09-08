@@ -3,7 +3,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 /**
  * BridgeStatus — health indicator for the Python bridge + protocol.
  *
- * Health comes from ping only. A failed dump/spoof/hunt is an OPERATION
+ * Health comes from ping only. A failed dump/spoof/analyze is an OPERATION
  * failure — it bumps a transient error pill, it does not brand the bridge
  * degraded. Degraded/offline is reserved for protocol anomalies, a stale
  * backend, or a dead subprocess, and the chip heals itself on the next
@@ -57,7 +57,6 @@ export default function BridgeStatus() {
     };
     bind(api.onDumpError);
     bind(api.onSpoofError);
-    bind(api.onHuntError);
     bind(api.onAnalyzeError);
 
     return () => {

@@ -423,10 +423,10 @@ html, body, #root {
 }
 
 .stealth-badge .stealth-dot.auto { background: var(--accent); }
-.stealth-badge .stealth-dot.extreme { background: var(--error); }
-.stealth-badge .stealth-dot.driver { background: var(--success); }
+.stealth-badge .stealth-dot.direct { background: var(--success); }
 .stealth-badge .stealth-dot.hijack { background: var(--warn); }
-.stealth-badge .stealth-dot.direct { background: var(--error); }
+.stealth-badge .stealth-dot.driver { background: var(--error); }
+.stealth-badge .stealth-dot.cr3 { background: var(--error); }
 
 .stealth-badge .stealth-label {
   font-size: 10px;
@@ -1046,7 +1046,7 @@ html, body, #root {
   border-top: 1px solid var(--border);
 }
 
-/* ── Hunter Page ─────────────────────────────────────── */
+/* ── Shared page layout (Analyzer / Explorer / Diagnostics) ── */
 
 .hunter-grid {
   display: grid;
@@ -1075,25 +1075,6 @@ html, body, #root {
   display: flex;
   align-items: center;
   gap: 8px;
-}
-
-.hunter-count {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-top: 10px;
-}
-
-.hunter-count-label {
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
-.hunter-count-value {
-  font-size: 20px;
-  font-weight: 650;
-  color: var(--accent);
-  font-family: var(--font-mono);
 }
 
 .hunter-console {

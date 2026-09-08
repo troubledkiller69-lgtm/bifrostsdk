@@ -16,12 +16,11 @@ const BIFROST_PROTOCOL_VERSION = '1.3';
 
 // Per-operation streaming channels. Events emitted by the backend carry a
 // `stream` tag (the command name), so each operation only reaches its own
-// channels — no cross-contamination between dump/spoof/hunt/analyze.
+// channels — no cross-contamination between dump/spoof/analyze.
 // analyze_export reuses the analyze-* channels (protocol events_emitted).
 const STREAMING_CHANNELS = {
   dump:   { log: 'dump-log',   error: 'dump-error',   progress: 'dump-progress',   complete: 'dump-complete' },
   spoof:  { log: 'spoof-log',  error: 'spoof-error',  progress: 'spoof-progress',  complete: 'spoof-complete' },
-  hunt:   { log: 'hunt-log',   error: 'hunt-error',   progress: 'hunt-progress',   complete: 'hunt-complete' },
   analyze: { log: 'analyze-log', error: 'analyze-error', progress: 'analyze-progress', complete: 'analyze-complete' },
   analyze_export: { log: 'analyze-log', error: 'analyze-error', progress: 'analyze-progress', complete: 'analyze-complete' },
 };
@@ -283,10 +282,6 @@ ipcMain.on('stop-dump', () => {
 
 ipcMain.on('start-spoofing', (event, opts) => {
   sendStreamingCommand('spoof', opts);
-});
-
-ipcMain.on('start-hunt', (event, opts) => {
-  sendStreamingCommand('hunt', opts);
 });
 
 ipcMain.on('start-analyze', (event, opts) => {

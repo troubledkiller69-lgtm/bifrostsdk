@@ -44,7 +44,7 @@ def _load_command_lists() -> Tuple[List[str], List[str]]:
              "read_memory", "ac_detect", "test_webhook", "cancel",
              "analyze_probe", "decompile_fn", "analyzer_hexdump",
              "analyzer_disasm_at", "analyzer_xrefs"],
-            ["dump", "spoof", "generate", "hunt", "analyze", "analyze_export"],
+            ["dump", "spoof", "generate", "analyze", "analyze_export"],
         )
 
 KNOWN_COMMANDS, KNOWN_STREAMING = _load_command_lists()

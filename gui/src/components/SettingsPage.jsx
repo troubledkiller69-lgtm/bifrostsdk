@@ -96,11 +96,11 @@ export default function SettingsPage() {
                 value={settings.defaultStealth}
                 onChange={(e) => update('defaultStealth', e.target.value)}
               >
-                <option value="auto">Auto</option>
+                <option value="auto">Auto (Direct)</option>
                 <option value="direct">Direct</option>
                 <option value="hijack">Handle Hijack</option>
                 <option value="driver">Kernel Driver</option>
-                <option value="extreme">CR3 Bypass</option>
+                <option value="cr3">CR3 Bypass</option>
               </select>
             </div>
 

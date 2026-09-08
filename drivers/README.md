@@ -42,19 +42,7 @@ mapper.load()
 mapper.unload()
 ```
 
-## Driver Hunter
-
-The Driver Hunter (`core/hunter/hunter.py`) searches the LOLDrivers API for additional candidates:
-
-```python
-from core.hunter.hunter import DriverHunter
-
-hunter = DriverHunter()
-results = hunter.start_hunt(max_drivers=200)
-# Returns scored list: [{"filename": "...", "score": 100, "capabilities": [...]}]
-```
-
-Results are cross-referenced against `drivers_list.json` to flag already-supported vs new candidates.
+Driver-based access is an explicit opt-in from the GUI or the `dump` API (`stealth: driver` / `stealth: cr3`). There is no auto-fallback into kernel code — `auto` means direct attach.
 
 ## Security Notes
 

@@ -38,7 +38,8 @@ Residual risks:
 
 The stealth subsystem is the highest-risk part of the tool by design:
 
-- It maps signed-but-vulnerable drivers and performs physical memory reads, manual page-table walks, and CR3 brute force.
+- It maps signed-but-vulnerable drivers and performs physical memory reads, manual page-table walks, and CR3 bypass reads.
+- Kernel-capable code stays dormant by default: transports are explicit (`direct`/`hijack`/`driver`/`cr3`), with no auto-fallback ladder that can silently escalate into a driver map. Every connect self-tests with a probe read and records the attach steps, so a failed kernel attach reports the exact failing step instead of pretending success.
 - Failures were historically silent (zero-filled reads, swallowed exceptions). After 4.0.0, unmapped pages raise, short physical reads raise, and CR3 resolution failure raises instead of returning a placeholder.
 - The spoofer's backup snapshot (including the SAM-derived value) is written next to the source tree during a spoof run. It's deleted on the restore happy path. A crash mid-run leaves it on disk — treat `core/stealth/.spoof_backup.json` as sensitive if you crash between spoof and restore.
 - Attach attempts are logged through the dump log channel, so what the access pipeline did is visible in the UI.
@@ -58,4 +59,4 @@ No credentials, API keys, or tokens are otherwise stored.
 
 - The bundled `.sys` files are flagged by Windows Defender as `HackTool:Win32/DriverMapper`-family on sight. The installer ships them because the driver access mode needs them, but expect AV friction; document hashes and offer the drivers as an optional component if you redistribute.
 - PyInstaller onefile bootloaders trigger generic AV heuristics. The backend is signed with nothing — SmartScreen will warn on first run. Signing is the known mitigation.
-- The Driver Hunter queries public databases (LOLDrivers, Microsoft Catalogs). Intended for security research and authorized testing; users own their compliance posture.
+- Kernel transports are what they look like: they map a vulnerable driver with a known mapper. Intended for security research and authorized testing; users own their compliance posture.

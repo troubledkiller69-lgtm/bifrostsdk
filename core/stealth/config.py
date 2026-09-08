@@ -1,155 +1,73 @@
 """
-BIFROST SDK — Stealth Configuration
-Centralized settings for all stealth subsystems.
-Provides preset profiles for different anti-cheat aggressiveness levels.
+BIFROST SDK — Access transport configuration.
+
+Each AccessMethod is a single, explicit transport for reaching a target
+process's memory. There is deliberately NO auto ladder: the direct
+transport is the only one verifiable without kernel machinery, and
+kernel transports (DRIVER, CR3) map a vulnerable driver — they can BSOD
+or trip AV, so nothing ever falls back into them. Choosing them is an
+explicit, informed act.
+
+Every transport self-tests at connect time (open -> probe read -> verify)
+and reports the exact step that failed instead of a generic "all access
+methods failed" message.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from enum import Enum, auto
+from dataclasses import dataclass
+from enum import Enum
 
 
 class AccessMethod(Enum):
-    """Memory access strategy, ordered by stealth level."""
-    DRIVER = auto()       # Physical memory via vulnerable driver (strongest)
-    PT_WALKER = auto()    # Manual physical page table walking (bypass CR3 encryption)
-    HIJACK = auto()       # Duplicated handle from system process
-    DIRECT = auto()       # Standard OpenProcess (unsafe for protected games)
-    AUTO = auto()         # Try each in order: pt_walker -> driver -> hijack -> direct
+    DIRECT = "direct"   # OpenProcess + ReadProcessMemory (userspace, verified)
+    HIJACK = "hijack"   # duplicated handle from a system process (userspace)
+    DRIVER = "driver"   # mapped vulnerable driver, physical reads via CR3
+    CR3 = "cr3"         # driver + manual page-table walk (CR3 bypass)
 
+    @property
+    def label(self) -> str:
+        return {
+            AccessMethod.DIRECT: "Direct Attach",
+            AccessMethod.HIJACK: "Handle Hijack",
+            AccessMethod.DRIVER: "Kernel Driver (Physical)",
+            AccessMethod.CR3: "PT Walker (Physical CR3)",
+        }[self]
 
-class StealthLevel(Enum):
-    """Pre-configured stealth profiles."""
-    OFF = auto()          # No stealth — use pymem directly
-    LOW = auto()          # Jitter only, direct attach
-    MEDIUM = auto()       # Handle hijacking + jitter + reduced scan speed
-    HIGH = auto()         # Driver + full jitter + PEB walk + minimal API calls
-    EXTREME = auto()      # CR3 Brute-force + Manual Page Table Walker
+    def requires_kernel(self) -> bool:
+        """True for transports that map a vulnerable driver."""
+        return self in (AccessMethod.DRIVER, AccessMethod.CR3)
 
 
 @dataclass
 class StealthConfig:
-    """All tuneable stealth parameters in one place."""
+    """Configuration for ONE memory-access transport.
 
-    # --- Access method ---
-    method: AccessMethod = AccessMethod.AUTO
-    driver_path: str = ""
+    scan_chunk_size / scan_inter_chunk_delay_ms are read by engines.base
+    (scanner pacing); the jitter knobs by StealthReader; use_ntquery_
+    enumeration by PID resolution. engines.base compares dumper configs
+    against STEALTH_OFF for equality, so keep this a plain dataclass.
+    """
+    method: AccessMethod = AccessMethod.DIRECT
+    driver_path: str | None = None
 
-    # --- Timing jitter ---
-    enable_jitter: bool = True
-    jitter_min_us: int = 50        # Minimum inter-read delay (microseconds)
-    jitter_max_us: int = 1500      # Maximum inter-read delay (microseconds)
-    burst_size: int = 8            # Reads per burst before cooldown
-    burst_cooldown_ms: int = 15    # Cooldown between bursts (milliseconds)
-    enable_idle_mimicry: bool = True  # Occasional long pauses
+    # Read-traffic shaping (applied when the transport is active)
+    enable_jitter: bool = False
+    jitter_min_us: int = 50
+    jitter_max_us: int = 1500
+    burst_size: int = 8
+    burst_cooldown_ms: int = 15
+    enable_idle_mimicry: bool = False
 
-    # --- Scanner tuning ---
-    scan_chunk_size: int = 0x10000    # 64 KB chunks (vs 1 MB in normal mode)
-    scan_inter_chunk_delay_ms: int = 5  # Delay between scan chunks
-    reduce_vqe_calls: bool = True     # Minimize VirtualQueryEx usage
+    # Scanner pacing consumed by engines/base -> PatternScanner
+    scan_chunk_size: int = 0x10000
+    scan_inter_chunk_delay_ms: int = 5
 
-    # --- Process enumeration ---
-    use_ntquery_enumeration: bool = True  # NtQuerySystemInformation vs psutil
-
-    # --- Debug ---
-    enable_debug_stats: bool = True   # Track read counts, timings, etc.
-
-
-# ── Preset profiles ──────────────────────────────────────────────────
-
-STEALTH_OFF = StealthConfig(
-    method=AccessMethod.DIRECT,
-    enable_jitter=False,
-    scan_chunk_size=0x100000,  # 1 MB — fast
-    scan_inter_chunk_delay_ms=0,
-    reduce_vqe_calls=False,
-    use_ntquery_enumeration=False,
-    enable_idle_mimicry=False,
-    enable_debug_stats=False,
-)
-
-STEALTH_LOW = StealthConfig(
-    method=AccessMethod.DIRECT,
-    enable_jitter=True,
-    jitter_min_us=20,
-    jitter_max_us=500,
-    scan_chunk_size=0x80000,   # 512 KB
-    scan_inter_chunk_delay_ms=2,
-    reduce_vqe_calls=False,
-    use_ntquery_enumeration=False,
-    enable_idle_mimicry=False,
-)
-
-STEALTH_MEDIUM = StealthConfig(
-    method=AccessMethod.HIJACK,
-    enable_jitter=True,
-    jitter_min_us=50,
-    jitter_max_us=1500,
-    burst_size=6,
-    burst_cooldown_ms=20,
-    scan_chunk_size=0x10000,   # 64 KB
-    scan_inter_chunk_delay_ms=5,
-    reduce_vqe_calls=True,
-    use_ntquery_enumeration=True,
-    enable_idle_mimicry=True,
-)
-
-STEALTH_HIGH = StealthConfig(
-    method=AccessMethod.DRIVER,
-    enable_jitter=True,
-    jitter_min_us=100,
-    jitter_max_us=3000,
-    burst_size=4,
-    burst_cooldown_ms=30,
-    scan_chunk_size=0x8000,    # 32 KB
-    scan_inter_chunk_delay_ms=10,
-    reduce_vqe_calls=True,
-    use_ntquery_enumeration=True,
-    enable_idle_mimicry=True,
-)
-
-STEALTH_EXTREME = StealthConfig(
-    method=AccessMethod.PT_WALKER,
-    enable_jitter=True,
-    jitter_min_us=100,
-    jitter_max_us=3000,
-    burst_size=2,
-    burst_cooldown_ms=50,
-    scan_chunk_size=0x4000,    # 16 KB
-    scan_inter_chunk_delay_ms=20,
-    reduce_vqe_calls=True,
-    use_ntquery_enumeration=True,
-    enable_idle_mimicry=True,
-)
-
-# Map stealth level to config
-STEALTH_PROFILES: dict[StealthLevel, StealthConfig] = {
-    StealthLevel.OFF: STEALTH_OFF,
-    StealthLevel.LOW: STEALTH_LOW,
-    StealthLevel.MEDIUM: STEALTH_MEDIUM,
-    StealthLevel.HIGH: STEALTH_HIGH,
-    StealthLevel.EXTREME: STEALTH_EXTREME,
-}
-
-# Games known to use aggressive anti-cheat
-AC_PROTECTED_GAMES: dict[str, StealthLevel] = {
-    "overwatch": StealthLevel.HIGH,
-    "overwatchob": StealthLevel.HIGH,
-    "r5apex": StealthLevel.HIGH,        # Apex Legends (EAC)
-    "valorant": StealthLevel.HIGH,      # Vanguard
-    "fortnite": StealthLevel.MEDIUM,    # EAC
-    "pubg": StealthLevel.MEDIUM,        # BattlEye
-    "rainbow6": StealthLevel.MEDIUM,    # BattlEye
-    "marvel": StealthLevel.LOW,         # Custom AC (lighter)
-    "cod": StealthLevel.HIGH,           # RICOCHET
-}
+    # PID resolution strategy (default: psutil snapshot)
+    use_ntquery_enumeration: bool = False
 
 
-def detect_stealth_level(process_name: str) -> StealthLevel:
-    """Auto-detect recommended stealth level based on process name."""
-    name_lower = process_name.lower().replace(".exe", "").replace("-", "").replace("_", "")
-    for keyword, level in AC_PROTECTED_GAMES.items():
-        if keyword in name_lower:
-            return level
-    return StealthLevel.OFF
+# engines/base defaults dumpers to this and treats it as "no stealth":
+# a dumper whose config equals STEALTH_OFF gets an unscanned, full-speed
+# PatternScanner. Must stay a plain default instance.
+STEALTH_OFF = StealthConfig()

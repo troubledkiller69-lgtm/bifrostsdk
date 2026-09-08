@@ -9,7 +9,6 @@ Covers Unreal Engine 5 (per-game profiles), Unity Mono and IL2CPP, Source 1 and 
 - **Dump** — pick a process, let the right engine walk its structures. Output is schema-validated: C++ headers, JSON, class/field lists.
 - **Analyze** — decompile any function in a dumped module to readable C, or export the whole binary's top functions to `.c` files in one batch pass.
 - **Spoof** — hardware ID spoofing through the same access pipeline.
-- **Hunt** — find hash-verified vulnerable signed drivers on the machine.
 - **Boilerplate** — generate a C++ project scaffold from a dump's data.
 
 The GUI is a frameless Electron app (React + Vite). The backend is a Python process that speaks line-delimited JSON over stdio — no HTTP, no ports.
@@ -103,16 +102,17 @@ The decompiler half. Point it at a file, or dump a module from a live process (h
 
 Every operation is a one-shot rizin process (Windows can't drive rizin interactively over a pipe — see the engine docstring), so a hung decompile dies with its process, never the SDK. Bodies cache on the analyzer side, so repeat clicks are instant. Rizin lives in `gui/extra/rizin/`; when it's absent the probe reports it and `analyze` degrades to iced-x86 with a warning.
 
-## Stealth access modes
+## Access modes
 
-`dump` takes `stealth: auto | driver | hijack | direct`:
+`dump` takes `stealth: auto | direct | hijack | driver | cr3`:
 
-- `auto` — PT walker -> vulnerable driver -> handle hijack -> direct, degrading gracefully.
-- `driver` — maps a signed-but-vulnerable driver (Intel iQVW64E, MSI RTCore64, Dell DBUtil/WDT, Corsair, Gigabyte) for physical reads.
+- `auto` — direct attach. The only transport verified end to end; kernel transports are explicit opt-ins, never a fallback.
+- `direct` — plain OpenProcess + ReadProcessMemory.
 - `hijack` — duplicates a `PROCESS_VM_READ` handle from a system process.
-- `direct` — plain pymem. Fine for VAC-only games, useless against EAC/BE/Vanguard.
+- `driver` — maps a signed-but-vulnerable driver (Intel iQVW64E, MSI RTCore64, Dell DBUtil/WDT, Corsair, Gigabyte) for physical reads.
+- `cr3` — driver plus manual page-table walk (CR3 bypass).
 
-Bundled `.sys` files hash-verify against known-good SHA256 before mapping. Mismatch aborts unless you pass `force=True`.
+Every transport self-tests at connect time (open -> probe read -> verify) and reports the exact failing step. Bundled `.sys` files hash-verify against known-good SHA256 before mapping. Mismatch aborts unless you pass `force=True`.
 
 ## The bridge protocol
 

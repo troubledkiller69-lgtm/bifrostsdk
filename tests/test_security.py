@@ -143,23 +143,3 @@ class TestWebhookValidation:
         assert self._is_valid_webhook(
             "https://discord.com/api/webhooks/123456"
         ) is False
-
-
-class TestMaxDriversCap:
-    """Verify max_drivers is capped."""
-
-    def test_cap_applied(self):
-        """Mirror the capping logic from gui_bridge.run_hunt."""
-        raw = 999999999
-        capped = min(int(raw), 500)
-        assert capped == 500
-
-    def test_default_preserved(self):
-        raw = 100
-        capped = min(int(raw), 500)
-        assert capped == 100
-
-    def test_zero_preserved(self):
-        raw = 0
-        capped = min(int(raw), 500)
-        assert capped == 0
