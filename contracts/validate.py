@@ -40,11 +40,12 @@ def _load_command_lists() -> Tuple[List[str], List[str]]:
     except Exception:
         # Fallback for environments where protocol JSON is not available
         return (
-            ["ping", "bridge_info", "list_processes", "spoof_info", "spoof_restore",
-             "read_memory", "ac_detect", "test_webhook", "cancel",
+            ["ping", "bridge_info", "list_processes",
+             "read_memory", "write_memory", "ac_detect", "test_webhook", "cancel",
              "analyze_probe", "decompile_fn", "analyzer_hexdump",
-             "analyzer_disasm_at", "analyzer_xrefs"],
-            ["dump", "spoof", "generate", "analyze", "analyze_export"],
+             "analyzer_disasm_at", "analyzer_xrefs", "analyzer_symbols", "analyzer_strings",
+             "debug_snapshot"],
+            ["dump", "generate", "analyze", "analyze_export"],
         )
 
 KNOWN_COMMANDS, KNOWN_STREAMING = _load_command_lists()

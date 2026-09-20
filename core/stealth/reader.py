@@ -264,7 +264,9 @@ class StealthReader:
         """Load the vulnerable driver and resolve the target's CR3."""
         try:
             # DriverInterface maps the vulnerable driver inside __init__.
-            self._driver = DriverInterface(driver_path=driver_path)
+            # BYO: driver_key from config selects the exact profile (intel, myvuln, etc).
+            dk = getattr(self._config, "driver_key", None)
+            self._driver = DriverInterface(driver_key=dk, driver_path=driver_path)
         except Exception as e:
             self._step("map driver", False, str(e))
             raise

@@ -8,7 +8,6 @@ Covers Unreal Engine 5 (per-game profiles), Unity Mono and IL2CPP, Source 1 and 
 
 - **Dump** — pick a process, let the right engine walk its structures. Output is schema-validated: C++ headers, JSON, class/field lists.
 - **Analyze** — decompile any function in a dumped module to readable C, or export the whole binary's top functions to `.c` files in one batch pass.
-- **Spoof** — hardware ID spoofing through the same access pipeline.
 - **Boilerplate** — generate a C++ project scaffold from a dump's data.
 
 The GUI is a frameless Electron app (React + Vite). The backend is a Python process that speaks line-delimited JSON over stdio — no HTTP, no ports.
@@ -17,7 +16,7 @@ The GUI is a frameless Electron app (React + Vite). The backend is a Python proc
 
 - Windows 10/11 x64. Admin rights (opening protected processes; the installer asks).
 - Dev only: Python 3.10+, Node 18+. The shipped app freezes the backend with PyInstaller.
-- Decompiler (optional): run `tools/provision_rizin.ps1` once. It fetches rizin and compiles the rz-ghidra plugin against it — rizinorg ships no prebuilt Windows plugin, so this is a one-time ~10 minute build on each machine.
+- Decompiler: rizin + rz-ghidra ships with the installer when you've run `tools/provision_rizin.ps1` once before building. That's a ~10 min fetch + compile — rizinorg ships no prebuilt Windows plugin. Without it, Analyzer falls back to iced-x86 and tells you. IDA is optional on top: if you own a license, run `tools/provision_ida.ps1` — it mirrors your `idat.exe` into `gui/extra/ida` (gitignored, packed like rizin). We never redistribute IDA.
 
 ## Dev setup
 
@@ -33,7 +32,7 @@ npm run dev                            # Vite on :5173, Electron window opens
 ## Tests
 
 ```bash
-python -m pytest tests/ -q             # 208 tests, no game required
+python -m pytest tests/ -q             # 242 tests, no game required
 python scripts/smoke_bridge.py         # exercises the stdio IPC protocol end to end
 ```
 
@@ -52,7 +51,7 @@ python scripts/compare_dumps.py output\cs2 <newer-dump-dir>
 
 `compare_dumps.py` is the offset-drift watcher — diff two dump outputs and it reports removed/added/changed classes with a per-field `old_hex → new_hex` table. Hex strings and raw ints both normalize; null offsets (AS3-style) compare null-vs-null as unchanged. Exit codes: 0 no drift (new classes alone are fine), 1 drift (changed/removed offsets or classes), 2 missing/unparseable input.
 
-Both are exercised by `tests/test_output_validation.py`.
+Both are exercised by `tests/test_output_validation.py`. `build.ps1` runs `verify_output --strict` automatically when `output/` exists; `tools/verify_extra.ps1 -Strict` fails the build if `gui/extra/rizin` is missing (IDA is optional).
 
 ## Build
 
@@ -68,7 +67,7 @@ Outputs:
 
 - `dist/api_server.exe` — frozen backend
 - `gui/dist-electron/win-unpacked/BIFROST SDK.exe` — unpacked app
-- `gui/dist-electron/BIFROST-SDK-4.0.0-Setup.exe` — NSIS installer (admin-elevated)
+- `gui/dist-electron/BIFROST-SDK-4.1.0-Setup.exe` — NSIS installer (admin-elevated)
 
 ## Repo map
 
@@ -77,7 +76,7 @@ api_server.py         stdio JSON dispatcher
 gui_bridge.py         command router + business logic (KNOWN_GAME_EXES)
 core/                 memory readers, AOB scanner, signature gen
 core/decomp/          analyzer: rizin-ghidra engine, iced fallback, module dumper
-core/stealth/         driver / hijack / PT-walker readers, spoofer
+core/stealth/         driver / hijack / PT-walker readers
 core/generator/       dump data -> C++ headers
 engines/              unreal/, unity/, source/, blizzard/ dumpers behind a registry
 contracts/            protocol JSON + schema + validator (single source of truth)
@@ -85,7 +84,7 @@ drivers/              vulnerable driver list + fetcher, hash-verified
 gui/                  Electron + React frontend
 tools/                provision_rizin.ps1
 scripts/              smoke_bridge.py, verify_output.py, compare_dumps.py
-tests/                208 pytest tests
+tests/                242 pytest tests
 docs/ARCHITECTURE.md  the four-layer model, in depth
 ```
 
@@ -102,20 +101,28 @@ docs/ARCHITECTURE.md  the four-layer model, in depth
 | Source 2 | `source` | CSchemaSystem via CUtlTSHash |
 | Blizzard | `blizzard` | ECS entities, RTTI class enumeration |
 
-`KNOWN_GAME_EXES` maps known executables to engines; anything unknown falls back to module-based detection in `core/process.py`.
+`KNOWN_GAME_EXES` in `gui_bridge.py` maps known executables to engines; anything unknown falls back to module-based detection in `core/process.py`. The `engines/registry.py` is the single entry point — `create_dumper()` replaces the old `elif` chain.
 
 Adding an engine: subclass `BaseDumper` in `engines/<engine>/dumper.py`, register it in `engines/registry.py`, add known exes to `KNOWN_GAME_EXES`. That's the whole diff — the full walkthrough (dumper contract, detection, output schema, tests) is in `docs/ENGINE_GUIDE.md`, with a copyable skeleton in `engines/template/`.
 
 ## The Analyzer
 
-The decompiler half. Point it at a file, or dump a module from a live process (hijack -> direct attach only; it never implicitly loads a driver), and it hands the image to rizin:
+Point it at a file, or dump a module from a live process (hijack -> direct attach only). The Analyzer picks the best engine you've provisioned:
 
-- `analyze` — load + auto-analysis, returns the function list ranked by size
-- `decompile_fn` — decompile one address; results cache per session
-- `analyze_export` — batch-decompiles the top functions to `.c` under `<source>/decomp/`
-- **Address explorer** — hex+ascii dump, linear disassembly, and cross-references at any address (`analyzer_hexdump`, `analyzer_disasm_at`, `analyzer_xrefs`). Disasm is rizin-free iced-x86 (instant scrolling); xrefs are a real rizin `axtj` pass.
+- `rizin-ghidra` — default, ships in the installer after `tools/provision_rizin.ps1`. One-shot `rizin` + `rz-ghidra` per job.
+- `ida` — optional, your licensed `idat.exe` found at `Downloads\IDA_Test\IDA Professional 9.1\idat.exe` or `C:\Program Files\IDA*`, staged via `tools/provision_ida.ps1` into `gui/extra/ida`. Headless `idat -A -S` dump, same function ranking. No license bypass — if IDA needs activation, we log and fall back.
+- `iced-x86` — always available, linear disassembly only. Used when neither decompiler is present.
 
-Every operation is a one-shot rizin process (Windows can't drive rizin interactively over a pipe — see the engine docstring), so a hung decompile dies with its process, never the SDK. Bodies cache on the analyzer side, so repeat clicks are instant. Rizin lives in `gui/extra/rizin/`; when it's absent the probe reports it and `analyze` degrades to iced-x86 with a warning.
+In the UI the engine picker is a deck preset `Auto | Rizin | IDA | Iced` — `Auto` picks rizin first, then IDA, then iced. Probe at `analyze_probe` reports `{rizin:{available,version,decompiler}, ida:{available,exe,version}}`.
+
+Operations:
+
+- `analyze` — load + auto-analysis, returns function list ranked by size (`Auto` respects your picker)
+- `decompile_fn` — decompile one address; results cache per session (rizin session stays open, IDA is batch — no session)
+- `analyze_export` — batch-decompile top N to `.c` under `<source>/decomp/`
+- **Address explorer** — hex+ascii, linear disasm, xrefs at any VA (`analyzer_hexdump`, `analyzer_disasm_at`, `analyzer_xrefs`). Disasm is rizin-free iced-x86; xrefs are real `axtj`.
+
+Rizin/IDA ops are one-shot processes, so a hung decompile dies with its process, never the SDK. Bodies cache, so repeat clicks are instant. Missing engines degrade to iced-x86 with a warning.
 
 ## Access modes
 
@@ -149,4 +156,4 @@ Change the protocol file first, always.
 
 ## Security
 
-The backend is an admin-elevated process with kernel access primitives. The threat model is in `SECURITY.md`; the short version is the renderer only reaches the backend through the validated stdio contract, drivers are hash-checked fail-closed, and nothing sensitive is stored beyond a spoof backup snapshot that self-deletes on the restore path.
+The backend is an admin-elevated process with kernel access primitives. The threat model is in `SECURITY.md`; the short version is the renderer only reaches the backend through the validated stdio contract and drivers are hash-checked fail-closed.

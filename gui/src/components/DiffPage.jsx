@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useContext } from 'react';
+import { ToastContext } from '../App';
 
 function computeDiff(before, after) {
   if (!before || !after) return { added: [], removed: [], changed: [], unchanged: [] };
@@ -48,21 +49,43 @@ export default function DiffPage() {
   const [beforeName, setBeforeName] = useState('');
   const [afterName, setAfterName] = useState('');
   const [filter, setFilter] = useState('all');
+  const [parseError, setParseError] = useState('');
+  const toast = useContext(ToastContext);
 
   const api = window.bifrost;
 
+  const showToast = (msg, type = 'error') => {
+    if (window.bifrost?.toast) window.bifrost.toast(msg, type);
+    else if (toast) toast(msg, type);
+  };
+
+  const validateDump = (data) => {
+    if (!data || !Array.isArray(data.classes)) {
+      showToast('Invalid dump file: expected { classes: [...] }', 'error');
+      setParseError('Invalid dump file: missing classes array');
+      return false;
+    }
+    return true;
+  };
+
   const loadFile = async (setter, nameSetter) => {
+    setParseError('');
     // Use Electron native dialog if available
     if (api?.loadJsonFile) {
       try {
         const result = await api.loadJsonFile();
         if (result && result.data) {
+          if (!validateDump(result.data)) return;
           setter(result.data);
           nameSetter(result.filename || 'loaded');
           return;
         }
         if (result?.cancelled) return;
-      } catch {}
+      } catch (e) {
+        showToast('Invalid dump file', 'error');
+        setParseError('Invalid dump file');
+        return;
+      }
     }
 
     // Dev fallback: browser file input
@@ -75,7 +98,14 @@ export default function DiffPage() {
       nameSetter(file.name);
       const reader = new FileReader();
       reader.onload = (ev) => {
-        try { setter(JSON.parse(ev.target.result)); } catch {}
+        try {
+          const parsed = JSON.parse(ev.target.result);
+          if (!validateDump(parsed)) return;
+          setter(parsed);
+        } catch {
+          showToast('Invalid dump file', 'error');
+          setParseError('Invalid dump file');
+        }
       };
       reader.readAsText(file);
     };
@@ -102,24 +132,31 @@ export default function DiffPage() {
 
   return (
     <>
-      <div className="page-header">
-        <div className="page-title">Offset Diff Viewer</div>
-        <div className="page-subtitle">Compare two dumps to find what changed after a game update</div>
+      <div className="page-header" style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+        <div className="page-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}><span style={{ width: 3, height: 14, background: '#7EFF3F', boxShadow: '0 0 6px rgba(126,255,63,0.45)', borderRadius: 1, display: 'inline-block' }} />Offset Diff</div>
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: total ? '#7EFF3F' : 'var(--text-ghost)', letterSpacing: '0.08em' }}>● {total ? `${diff.changed.length} MOD · ${diff.added.length} NEW · ${diff.removed.length} DEL` : 'NO DIFF'}</span>
+        <div className="page-subtitle" style={{ width: '100%', marginTop: 2 }}>Compare two dumps to find what changed after a game update — <span style={{ color: 'var(--text-ghost)', fontFamily: 'var(--font-mono)', fontSize: 11 }}>BEFORE vs AFTER · lime NEW · rose DEL · steel MOD</span></div>
       </div>
 
+      {parseError && (
+        <div role="alert" style={{ background: 'var(--error-soft)', border: '1px solid rgba(217,74,74,0.22)', borderRadius: 5, padding: '8px 12px', marginBottom: 12, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--error)' }}>
+          {parseError}
+        </div>
+      )}
+
       <div className="diff-toolbar">
-        <button className="btn" onClick={() => loadFile(setBefore, setBeforeName)}>
+        <button className="btn" onClick={() => loadFile(setBefore, setBeforeName)} style={{ fontSize: 12 }}>
           {beforeName ? `Before: ${beforeName}` : 'Load Before'}
         </button>
-        <span style={{ color: 'var(--text-muted)' }}>vs</span>
-        <button className="btn" onClick={() => loadFile(setAfter, setAfterName)}>
+        <span style={{ color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: 11 }}>vs</span>
+        <button className="btn" onClick={() => loadFile(setAfter, setAfterName)} style={{ fontSize: 12 }}>
           {afterName ? `After: ${afterName}` : 'Load After'}
         </button>
         <div style={{ flex: 1 }} />
         {total > 0 && (
           <select
             className="input-field"
-            style={{ width: 160 }}
+            style={{ width: 160, fontSize: 12 }}
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
           >
@@ -132,36 +169,42 @@ export default function DiffPage() {
       </div>
 
       {total > 0 && (
-        <div className="diff-summary">
+        <div className="diff-summary" style={{ background: '#0a0a0c', border: '1px solid rgba(255,255,255,0.08)', borderTop: '1px solid rgba(255,255,255,0.12)', borderRadius: 5, padding: '10px 12px', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.08)', marginBottom: 12 }}>
           <div className="diff-stat">
-            <span className="dot added" />
-            <span style={{ color: 'var(--success)' }}>{diff.added.length} added</span>
+            <span className="dot added" style={{ background: '#7EFF3F', boxShadow: '0 0 6px rgba(126,255,63,0.45)' }} />
+            <span style={{ color: '#7EFF3F', fontWeight: 700, fontFamily: 'var(--font-mono)', fontSize: 11, textShadow: '0 0 6px rgba(126,255,63,0.28)' }}>{diff.added.length} NEW</span>
           </div>
           <div className="diff-stat">
-            <span className="dot removed" />
-            <span style={{ color: 'var(--error)' }}>{diff.removed.length} removed</span>
+            <span className="dot removed" style={{ background: '#d94a4a' }} />
+            <span style={{ color: '#d94a4a', fontWeight: 700, fontFamily: 'var(--font-mono)', fontSize: 11 }}>{diff.removed.length} DEL</span>
           </div>
           <div className="diff-stat">
-            <span className="dot changed" />
-            <span style={{ color: 'var(--warn)' }}>{diff.changed.length} changed</span>
+            <span className="dot changed" style={{ background: '#94a3b8' }} />
+            <span style={{ color: '#94a3b8', fontWeight: 700, fontFamily: 'var(--font-mono)', fontSize: 11 }}>{diff.changed.length} MOD</span>
           </div>
           <div className="diff-stat">
-            <span className="dot unchanged" />
-            <span style={{ color: 'var(--text-muted)' }}>{diff.unchanged.length} unchanged</span>
+            <span className="dot unchanged" style={{ background: 'var(--text-ghost)' }} />
+            <span style={{ color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: 11 }}>{diff.unchanged.length} OK</span>
           </div>
+          <div style={{ marginLeft: 'auto', fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-ghost)' }}>{total} fields</div>
         </div>
       )}
 
       {!before && !after ? (
-        <div className="log-console" style={{ textAlign: 'center', padding: 40 }}>
-          <p className="log-line dim">Load two JSON dump files to compare offsets.</p>
-          <p className="log-line dim" style={{ marginTop: 8, fontSize: 11 }}>
-            Tip: Dump a game before an update, save the JSON. After the update, dump again and compare.
+        <div className="empty-state" style={{ padding: 36 }}>
+          <div className="empty-title">No dumps loaded</div>
+          <p className="empty-hint">Load two JSON dump files to compare offsets.</p>
+          <div className="empty-action" style={{ display: 'flex', gap: 8, justifyContent: 'center', marginTop: 8 }}>
+            <button className="btn btn-primary" onClick={() => loadFile(setBefore, setBeforeName)}>Load Before</button>
+            <button className="btn btn-primary" onClick={() => loadFile(setAfter, setAfterName)}>Load After</button>
+          </div>
+          <p className="empty-hint" style={{ marginTop: 8, fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text-ghost)' }}>
+            Tip: Dump before an update, save JSON. After update, dump again and compare.
           </p>
         </div>
       ) : total === 0 && before && after ? (
-        <div className="log-console" style={{ textAlign: 'center', padding: 40 }}>
-          <p className="log-line success">No differences found. Both dumps are identical.</p>
+        <div className="empty-state" style={{ padding: 36 }}>
+          <p className="log-line success" style={{ fontWeight: 600 }}>No differences found. Both dumps are identical.</p>
         </div>
       ) : (
         <div className="field-table-wrapper" style={{ maxHeight: 'calc(100vh - 320px)' }}>
@@ -196,7 +239,7 @@ export default function DiffPage() {
                     {row.status === 'changed' && row.oldOffset !== row.offset && (
                       <span className="diff-old-value">0x{row.oldOffset?.toString(16).toUpperCase()}</span>
                     )}
-                    <span style={{ color: 'var(--accent)' }}>
+                    <span style={{ color: row.status === 'added' ? '#7EFF3F' : row.status === 'removed' ? 'var(--error)' : 'var(--accent)', fontWeight: 600 }}>
                       0x{(row.offset || 0).toString(16).toUpperCase()}
                     </span>
                   </td>

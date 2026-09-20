@@ -20,7 +20,6 @@ const BIFROST_PROTOCOL_VERSION = '1.3';
 // analyze_export reuses the analyze-* channels (protocol events_emitted).
 const STREAMING_CHANNELS = {
   dump:   { log: 'dump-log',   error: 'dump-error',   progress: 'dump-progress',   complete: 'dump-complete',   access: 'dump-access' },
-  spoof:  { log: 'spoof-log',  error: 'spoof-error',  progress: 'spoof-progress',  complete: 'spoof-complete' },
   analyze: { log: 'analyze-log', error: 'analyze-error', progress: 'analyze-progress', complete: 'analyze-complete' },
   analyze_export: { log: 'analyze-log', error: 'analyze-error', progress: 'analyze-progress', complete: 'analyze-complete' },
 };
@@ -30,11 +29,12 @@ const ALL_STREAMING_CHANNELS = Object.values(STREAMING_CHANNELS).flatMap(s => Ob
 const ALLOWED_COMMANDS = [
   'ping', 'bridge_info',
   'list_processes',
-  'test_webhook', 'spoof_info', 'spoof_restore', 'read_memory', 'ac_detect',
+  'test_webhook', 'read_memory', 'write_memory', 'ac_detect',
   'analyze_probe', 'decompile_fn',
   'analyzer_hexdump', 'analyzer_disasm_at', 'analyzer_xrefs',
   'analyzer_symbols', 'analyzer_strings',
   'debug_snapshot',
+  'driver_list', 'driver_test',
 ];
 
 // Request-response timeout per command. decompile_fn and analyzer_xrefs run
@@ -282,10 +282,6 @@ ipcMain.on('start-dump', (event, opts) => {
 
 ipcMain.on('stop-dump', () => {
   cancelStreaming('dump');
-});
-
-ipcMain.on('start-spoofing', (event, opts) => {
-  sendStreamingCommand('spoof', opts);
 });
 
 ipcMain.on('start-analyze', (event, opts) => {

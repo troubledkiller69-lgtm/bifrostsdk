@@ -84,9 +84,12 @@ export default function AnalyzerPage() {
   const [stringsError, setStringsError] = useState('');
   const [stringFilter, setStringFilter] = useState('');
   const [explorerTarget, setExplorerTarget] = useState(null); // {addr, ts}
+  const [engineChoice, setEngineChoice] = useState('auto'); // auto | rizin | ida | iced
 
   const consoleEndRef = useRef(null);
   const api = window.bifrost;
+
+  useEffect(() => { window.__bifrost_analyzing = running != null; }, [running]);
 
   useEffect(() => {
     consoleEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -249,6 +252,7 @@ export default function AnalyzerPage() {
       if (!filePath) { addLog('Choose a binary first', 'error'); return; }
       source = { type: 'file', path: filePath };
     }
+    if (engineChoice !== 'auto') source.engine = engineChoice;
     setLogs([]);
     setResult(null);
     setExportInfo(null);
@@ -261,16 +265,19 @@ export default function AnalyzerPage() {
     setStringsError('');
     setProgress({ stage: 'Starting', pct: 0 });
     setRunning('analyze');
-    addLog(`Analyzing ${sourceType === 'module' ? `${moduleName.trim()} (PID ${parseInt(modulePid, 10)})` : filePath}`);
+    addLog(`Analyzing ${sourceType === 'module' ? `${moduleName.trim()} (PID ${parseInt(modulePid, 10)})` : filePath}${engineChoice !== 'auto' ? ` [${engineChoice}]` : ''}`);
     api.startAnalyze({ source, limit: 400 });
   };
 
   const handleCancelAnalyze = () => {
     if (!api || !running) return;
     setRunning(null);
-    addLog('Cancellation requested — analyze will stop at the next checkpoint', 'warn');
+    setProgress({ stage: 'Cancelling…', pct: progress.pct });
+    addLog('Cancellation requested — analyze will stop at the next checkpoint (cooperative, not instant)', 'warn');
     if (running === 'analyze_export') api.stopAnalyzeExport();
     else api.stopAnalyze();
+    // watchdog: if backend doesn't ACK in 5s, nudge
+    setTimeout(() => { if (window.bifrost?.toast) window.bifrost.toast('If cancel stalls, backend thread dump in Diagnostics will show where it is hung', 'info'); }, 5000);
   };
 
   const handleExport = () => {
@@ -343,54 +350,61 @@ export default function AnalyzerPage() {
         <div className="page-subtitle">Open a binary or running module, map functions, decompile bodies via rizin-ghidra</div>
       </div>
 
-      <div className="hunter-grid">
-        <div className="hunter-config">
-          <div className="hunter-config-card">
-            <div className="hunter-config-title">Decompiler Engines</div>
+      <div className="page-grid">
+        <div className="page-config">
+          <div className="page-config-card">
+            <div className="page-config-title">Decompiler Engines</div>
             {probeError ? (
               <div style={{ fontSize: 12, color: 'var(--error)' }}>{probeError}</div>
             ) : !probe ? (
               <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Checking engine availability...</div>
             ) : (
               <>
-                <span
-                  className="engine-card-tag"
-                  style={{
-                    background: rizinOk ? 'var(--success-soft)' : 'var(--warn-soft)',
-                    color: rizinOk ? 'var(--success)' : 'var(--warn)'
-                  }}
-                >
-                  {rizinOk ? 'rizin-ghidra (Ghidra decompiler)' : 'iced-x86 (fallback)'}
-                </span>
-                <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 10, lineHeight: 1.6 }}>
-                  {rizinOk ? (
-                    <>
-                      rizin {probe.rizin.version || ''} with rz-ghidra loaded — full C decompilation
-                      for function bodies.
-                    </>
-                  ) : rizinPresent ? (
-                    <>
-                      rizin is installed but the rz-ghidra plugin is missing. Run
-                      <span className="log-line dim"> tools/provision_rizin.ps1 </span>
-                      once to enable Ghidra decompilation.
-                    </>
-                  ) : (
-                    <>
-                      rizin is not provisioned. Run
-                      <span className="log-line dim"> tools/provision_rizin.ps1 </span>
-                      once from the SDK root to enable Ghidra decompilation.
-                    </>
-                  )}
+                {/* Deck preset — rizin | ida | iced, lime edge on selected */}
+                <div role="radiogroup" aria-label="Engine" style={{ display: 'flex', gap: 6, background: '#050507', border: '1px solid rgba(0,0,0,0.6)', borderRadius: 3, padding: 4, boxShadow: 'inset 1px 1px 0 rgba(0,0,0,0.6), inset -1px -1px 0 rgba(255,255,255,0.04)', marginBottom: 10 }}>
+                  {[
+                    { id: 'auto', label: 'Auto', hint: 'best' },
+                    { id: 'rizin', label: 'Rizin', hint: probe?.rizin?.available ? (probe?.rizin?.decompiler ? '●' : 'no ghidra') : 'missing' },
+                    { id: 'ida', label: 'IDA', hint: probe?.ida?.available ? '●' : 'no exe' },
+                    { id: 'iced', label: 'Iced', hint: 'fallback' },
+                  ].map(opt => {
+                    const active = engineChoice === opt.id;
+                    const disabled = (opt.id === 'ida' && !probe?.ida?.available) || (opt.id === 'rizin' && !probe?.rizin?.available);
+                    return (
+                      <button key={opt.id} role="radio" aria-checked={active} disabled={disabled}
+                        onClick={() => setEngineChoice(opt.id)}
+                        style={{
+                          flex: 1, padding: '6px 6px', borderRadius: 3,
+                          border: active ? '1px solid rgba(126,255,63,0.42)' : '1px solid transparent',
+                          borderTopColor: active ? 'rgba(126,255,63,0.55)' : 'transparent',
+                          background: active ? '#0a0a0c' : 'transparent',
+                          color: disabled ? 'var(--text-ghost)' : active ? '#7EFF3F' : 'var(--text-muted)',
+                          fontSize: 11, fontWeight: 700, fontFamily: 'var(--font-display)', letterSpacing: '0.08em', textTransform: 'uppercase',
+                          cursor: disabled ? 'not-allowed' : 'pointer',
+                          boxShadow: active ? 'inset 0 1px 0 rgba(255,255,255,0.06), 0 0 8px rgba(126,255,63,0.14)' : 'none',
+                          textShadow: active ? '0 0 6px rgba(126,255,63,0.28)' : 'none', opacity: disabled ? 0.45 : 1
+                        }}>
+                        {opt.label}<span style={{ display: 'block', fontSize: 9, fontWeight: 500, letterSpacing: '0.04em', opacity: 0.65, marginTop: 1 }}>{opt.hint}</span>
+                      </button>
+                    );
+                  })}
                 </div>
-                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 8, lineHeight: 1.5 }}>
-                  Fallback engine: iced-x86 — linear disassembly only, no decompiler.
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+                  <span className="engine-card-tag" style={{ background: rizinOk ? 'rgba(126,255,63,0.12)' : 'var(--warn-soft)', color: rizinOk ? '#7EFF3F' : 'var(--warn)', border: rizinOk ? '1px solid rgba(126,255,63,0.22)' : '1px solid transparent', textShadow: rizinOk ? '0 0 6px rgba(126,255,63,0.28)' : 'none' }}>{rizinOk ? 'rizin-ghidra' : 'rizin — no ghidra'}</span>
+                  <span className="engine-card-tag" style={{ background: probe?.ida?.available ? 'rgba(126,255,63,0.12)' : 'var(--border)', color: probe?.ida?.available ? '#7EFF3F' : 'var(--text-ghost)' }}>{probe?.ida?.available ? `ida ${probe.ida.version || ''}`.trim() : 'ida — not found'}</span>
+                  <span className="engine-card-tag" style={{ background: 'var(--border)', color: 'var(--text-muted)' }}>iced-x86</span>
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                  {engineChoice === 'ida' && !probe?.ida?.available && <span style={{ color: 'var(--error)' }}>IDA exe not found — place your licensed IDA in Downloads\IDA_Test\IDA Professional 9.1\idat.exe or C:\Program Files\IDA* — </span>}
+                  {engineChoice === 'rizin' && !probe?.rizin?.available && <span style={{ color: 'var(--error)' }}>Rizin not provisioned — </span>}
+                  Auto picks rizin-ghidra first, then IDA {probe?.ida?.available ? '(found)' : '(provide idat.exe)'}, then iced. Provision rizin via <span className="log-line dim">tools/provision_rizin.ps1</span> · IDA via <span className="log-line dim">tools/provision_ida.ps1</span>
                 </div>
               </>
             )}
           </div>
 
-          <div className="hunter-config-card">
-            <div className="hunter-config-title">Source</div>
+          <div className="page-config-card">
+            <div className="page-config-title">Source</div>
             <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
               <button
                 className={`btn ${sourceType === 'file' ? 'btn-primary' : 'btn-secondary'}`}
@@ -461,8 +475,8 @@ export default function AnalyzerPage() {
             )}
           </div>
 
-          <div className="hunter-config-card">
-            <div className="hunter-config-title">Actions</div>
+          <div className="page-config-card">
+            <div className="page-config-title">Actions</div>
             <button
               className="btn btn-primary"
               onClick={handleAnalyze}
@@ -525,7 +539,7 @@ export default function AnalyzerPage() {
                 </span>
                 <span className="pct">{progress.pct}%</span>
               </div>
-              <div className="progress-track">
+              <div className="progress-track" role="progressbar" aria-valuenow={progress.pct} aria-valuemin={0} aria-valuemax={100} aria-label={running === 'analyze_export' ? 'Export progress' : 'Analyze progress'}>
                 <div
                   className={`progress-fill ${progress.pct >= 100 ? 'complete' : ''}`}
                   style={{ width: `${progress.pct}%` }}
@@ -534,11 +548,11 @@ export default function AnalyzerPage() {
             </div>
           )}
 
-          <div className="hunter-console">
-            <div className="hunter-console-header">
-              <span className="hunter-console-title">analyzer.log</span>
+          <div className="page-console">
+            <div className="page-console-header">
+              <span className="page-console-title">analyzer.log</span>
             </div>
-            <div className="hunter-console-body">
+            <div className="page-console-body">
               {logs.length === 0 ? (
                 <div className="log-line dim">Awaiting analysis job...</div>
               ) : (
@@ -598,8 +612,8 @@ export default function AnalyzerPage() {
           )}
 
           {exportInfo && (
-            <div className="hunter-config-card" style={{ padding: 14 }}>
-              <div className="hunter-config-title" style={{ marginBottom: 8 }}>
+            <div className="page-config-card" style={{ padding: 14 }}>
+              <div className="page-config-title" style={{ marginBottom: 8 }}>
                 Export — {exportInfo.count} files in {exportInfo.dir}
               </div>
               <div className="log-console" style={{ maxHeight: 180 }}>
@@ -612,168 +626,113 @@ export default function AnalyzerPage() {
             </div>
           )}
 
-          {result && (
-            <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10 }}>
-                <span style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text-secondary)' }}>
-                  Functions
-                </span>
-                <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
-                  {visibleFns.length} / {functions.length}
-                </span>
-                <div style={{ flex: 1 }} />
-                <input
-                  type="text"
-                  className="input-field"
-                  style={{ width: 240, padding: '6px 10px', fontSize: 12 }}
-                  placeholder="Filter by name or address"
-                  value={filter}
-                  onChange={(e) => setFilter(e.target.value)}
-                />
-              </div>
-              <div className="process-table-wrapper" style={{ maxHeight: 420 }}>
-                <table className="process-table">
-                  <thead>
-                    <tr>
-                      <th style={{ width: 180 }}>Address</th>
-                      <th style={{ width: 120 }}>Size</th>
-                      <th>Name</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {visibleFns.map((fn, idx) => (
-                      <tr
-                        key={idx}
-                        className={fn.addr === activeAddr ? 'selected' : ''}
-                        onClick={() => handleRowClick(fn)}
-                      >
-                        <td style={{ color: 'var(--accent)' }}>{fmtAddr(fn.addr)}</td>
-                        <td style={{ color: 'var(--text-muted)' }}>{fn.size != null ? fn.size.toLocaleString() : '-'}</td>
-                        <td className="name">{fn.name || '-'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                {visibleFns.length === 0 && (
-                  <div className="log-line dim" style={{ padding: 20, textAlign: 'center' }}>
-                    No functions match the filter
+          {(result || true) && (
+            <div className="analyzer-deck">
+              {/* LEFT — function tree */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12, minWidth: 0 }}>
+                {result ? (
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text-secondary)', fontFamily: 'var(--font-display)' }}>Functions</span>
+                      <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>{visibleFns.length} / {functions.length}</span>
+                      <span style={{ flex: 1 }} />
+                      {decompiling && <span style={{ fontSize: 10, color: 'var(--accent)', fontFamily: 'var(--font-mono)' }}>● DECOMPILING</span>}
+                    </div>
+                    <div style={{ marginBottom: 8 }}>
+                      <input type="text" className="input-field" style={{ width: '100%', padding: '7px 10px', fontSize: 12, background: '#050507', borderColor: 'rgba(0,0,0,0.6)', boxShadow: 'inset 1px 1px 0 rgba(0,0,0,0.6)' }} placeholder="Filter by name or address" value={filter} onChange={(e) => setFilter(e.target.value)} />
+                    </div>
+                    <div className="process-table-wrapper" style={{ maxHeight: '56vh', minHeight: 240 }}>
+                      <table className="process-table">
+                        <thead>
+                          <tr>
+                            <th style={{ width: 120 }}>Address</th>
+                            <th>Name</th>
+                            <th style={{ width: 70 }}>Size</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {decompiling ? (
+                            Array.from({ length: 4 }).map((_, i) => (
+                              <tr key={`sk-${i}`}><td colSpan="3" style={{ padding: 0, border: 'none' }}><div className="skeleton-row"><div className="skeleton skeleton-cell pid" style={{ width: 90 }} /><div className="skeleton skeleton-cell name" style={{ flex: 1 }} /></div></td></tr>
+                            ))
+                          ) : visibleFns.map((fn, idx) => (
+                            <tr key={idx} tabIndex={0} role="button" aria-selected={fn.addr === activeAddr} className={fn.addr === activeAddr ? 'selected' : ''} onClick={() => handleRowClick(fn)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleRowClick(fn); } }}>
+                              <td style={{ color: 'var(--accent)', fontSize: 11 }}>{fmtAddr(fn.addr)}</td>
+                              <td className="name" style={{ fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 140 }} title={fn.name}>{fn.name || '-'}</td>
+                              <td style={{ color: 'var(--text-muted)', fontSize: 11 }}>{fn.size != null ? fn.size.toLocaleString() : '-'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      {visibleFns.length === 0 && !decompiling && (
+                        <div className="log-line dim" style={{ padding: 12, fontSize: 11, textAlign: 'center' }}>{result ? 'No functions match filter' : 'Analyze a binary to populate'}</div>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="page-config-card" style={{ padding: 16, textAlign: 'center' }}>
+                    <div className="log-line dim" style={{ fontSize: 12 }}>No analysis yet</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-ghost)', marginTop: 6, fontFamily: 'var(--font-mono)' }}>Pick a binary → Analyze → functions appear here</div>
                   </div>
                 )}
               </div>
+
+              {/* CENTER — decompile */}
+              <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {(activeFn || decompTarget) ? (
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, fontWeight: 700, color: 'var(--accent)', background: '#050507', border: '1px solid rgba(0,0,0,0.6)', borderRadius: 3, padding: '4px 8px', boxShadow: 'inset 1px 1px 0 rgba(0,0,0,0.6)' }}>{fmtAddr((decompTarget || activeFn).addr)}</span>
+                      <span className="name" style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{(decompTarget || activeFn).name || ''}</span>
+                      <div style={{ flex: 1 }} />
+                      <button className="btn" style={{ padding: '4px 8px', fontSize: 10 }} onClick={() => { if (decompiled?.code && navigator.clipboard) navigator.clipboard.writeText(decompiled.code).then(()=>window.bifrost?.toast && window.bifrost.toast('Copied','success')); }} disabled={!decompiled?.code}>Copy</button>
+                      {decompiling && <span style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>decompiling…</span>}
+                    </div>
+                    {decompiling ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '8px 0' }}>{Array.from({ length: 5 }).map((_, i) => (<div key={i} className="skeleton-row" style={{ padding: '6px 12px' }}><div className="skeleton skeleton-cell" style={{ width: `${60 + i * 7}%`, height: 10 }} /></div>))}</div>
+                    ) : codeError ? (
+                      <div className="log-console" style={{ maxHeight: 420, borderColor: 'var(--error)' }}><p className="log-line error">{codeError}</p></div>
+                    ) : decompiled ? (
+                      <div style={{ maxHeight: '56vh', overflow: 'auto' }}><CodeBlock code={decompiled.code} symbols={symbols} addrName={addrName} onJump={jumpToSymbol} /></div>
+                    ) : (
+                      <div className="empty-state" style={{ padding: 20 }}><div className="empty-title">Pick a function</div><p className="empty-hint">Click a row on the left or a highlighted identifier in the body.</p></div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="page-config-card" style={{ padding: 24, textAlign: 'center', minHeight: 260, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                    <div style={{ width: 3, height: 18, background: '#7EFF3F', boxShadow: '0 0 6px rgba(126,255,63,0.35)', marginBottom: 12 }} />
+                    <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', fontSize: 13, color: 'var(--text-secondary)' }}>Decompile</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-ghost)', marginTop: 6, fontFamily: 'var(--font-mono)', maxWidth: 320 }}>Select a function from the left pane. Identifiers and 0x… constants that resolve to symbols are clickable → jump.</div>
+                  </div>
+                )}
+              </div>
+
+              {/* RIGHT — strings + explorer stack */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12, minWidth: 0 }}>
+                {result?.session ? (
+                  <div className="page-config-card" style={{ padding: 10 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                      <span className="page-config-title" style={{ marginBottom: 0, fontSize: 11, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Strings</span>
+                      {strings && !stringsLoading && <span style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>{strings.length}</span>}
+                      <div style={{ flex: 1 }} />
+                      <button className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: 10 }} onClick={() => fetchStrings()} disabled={stringsLoading}>{stringsLoading ? 'SCANNING…' : (strings ? 'RESCAN' : 'SCAN')}</button>
+                    </div>
+                    <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+                      <input type="text" className="input-field" style={{ flex: 1, padding: '6px 8px', fontSize: 11 }} placeholder="Filter strings" value={stringFilter} onChange={(e) => setStringFilter(e.target.value)} />
+                    </div>
+                    {stringsError ? (<div className="log-line error" style={{ fontSize: 11 }}>{stringsError}</div>) : stringsLoading ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>{Array.from({ length: 3 }).map((_, i) => (<div key={i} className="skeleton-row" style={{ padding: '6px 8px' }}><div className="skeleton skeleton-cell" style={{ width: 70 }} /><div className="skeleton skeleton-cell" style={{ flex: 1 }} /></div>))}</div>
+                    ) : !strings ? (<div className="log-line dim" style={{ fontSize: 11 }}>ASCII + UTF-16LE runs → VAs. Click to open in explorer.</div>) : strings.length === 0 ? (<div className="log-line dim" style={{ fontSize: 11 }}>No printable runs.</div>) : (
+                      (() => { const q = stringFilter.trim().toLowerCase(); const visible = q ? strings.filter(s => s.text.toLowerCase().includes(q) || fmtAddr(s.addr).toLowerCase().includes(q)) : strings; const slice = visible.slice(0, 120); return (<div className="log-console" style={{ maxHeight: 220, overflow: 'auto', padding: 0 }}>{visible.length === 0 ? (<div className="log-line dim" style={{ padding: 8 }}>No match</div>) : slice.map((s, i) => (<div key={i} className="hex-row" style={{ cursor: 'pointer', padding: '4px 8px' }} title="Open in explorer" onClick={() => setExplorerTarget({ addr: s.addr, ts: Date.now() })}><span style={{ color: 'var(--accent)', fontFamily: 'var(--font-mono)', fontSize: 10 }}>{fmtAddr(s.addr)}</span><span style={{ color: 'var(--text-ghost)', fontFamily: 'var(--font-mono)', fontSize: 9, padding: '0 6px' }}>{s.enc}</span><span style={{ color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)', fontSize: 10, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.text}</span></div>))}{visible.length > 120 && <div className="log-line dim" style={{ padding: '6px 8px', fontSize: 10 }}>… and {visible.length - 120} more — filter to narrow</div>}</div>); })()
+                    )}
+                  </div>
+                ) : (
+                  <div className="page-config-card" style={{ padding: 12 }}><div className="log-line dim" style={{ fontSize: 11 }}>{result ? 'Session closed — strings need an open session (rizin/ida).' : 'Run Analyze to unlock strings + explorer.'}</div></div>
+                )}
+                <AddressExplorer api={api} enabled={!!result} sessionOpen={!!result?.session} jumpTarget={explorerTarget} />
+              </div>
             </div>
           )}
-
-              {(activeFn || decompTarget) && (
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 700, color: 'var(--accent)' }}>
-                      {fmtAddr((decompTarget || activeFn).addr)}
-                    </span>
-                    <span className="name" style={{ fontSize: 13 }}>{(decompTarget || activeFn).name || ''}</span>
-                    <div style={{ flex: 1 }} />
-                    {decompiling && <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>decompiling...</span>}
-                  </div>
-                  {codeError ? (
-                    <div className="log-console" style={{ maxHeight: 240, borderColor: 'var(--error)' }}>
-                      <p className="log-line error">{codeError}</p>
-                    </div>
-                  ) : decompiled ? (
-                    <CodeBlock
-                      code={decompiled.code}
-                      symbols={symbols}
-                      addrName={addrName}
-                      onJump={jumpToSymbol}
-                    />
-                  ) : !decompiling && (
-                    <div className="empty-state">
-                      <div className="empty-title">No function selected</div>
-                      <div className="empty-hint">Pick a function from the list — or click any highlighted identifier inside a decompiled body.</div>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {result?.session && (
-                <div className="hunter-config-card" style={{ padding: 14 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-                    <span className="hunter-config-title" style={{ marginBottom: 0 }}>
-                      Strings
-                    </span>
-                    {strings && !stringsLoading && (
-                      <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
-                        {strings.length} / {result.size != null ? (result.size / 1048576).toFixed(0) + 'MB' : ''} scanned
-                      </span>
-                    )}
-                    <div style={{ flex: 1 }} />
-                    <input
-                      type="text"
-                      className="input-field"
-                      style={{ width: 200, padding: '6px 10px', fontSize: 12 }}
-                      placeholder="Filter strings"
-                      value={stringFilter}
-                      onChange={(e) => setStringFilter(e.target.value)}
-                    />
-                    <button
-                      className="btn btn-secondary"
-                      style={{ padding: '6px 14px', fontSize: 11 }}
-                      onClick={() => fetchStrings()}
-                      disabled={stringsLoading}
-                    >
-                      {stringsLoading ? 'SCANNING...' : (strings ? 'RESCAN' : 'SCAN')}
-                    </button>
-                  </div>
-                  {stringsError ? (
-                    <div className="log-line error" style={{ fontSize: 12 }}>{stringsError}</div>
-                  ) : stringsLoading ? (
-                    <div className="log-line dim" style={{ fontSize: 12 }}>Scanning image for ASCII + UTF-16LE runs...</div>
-                  ) : !strings ? (
-                    <div className="log-line dim" style={{ fontSize: 12 }}>
-                      ASCII + UTF-16LE runs mapped to VAs. Click a row to open it in the explorer below.
-                    </div>
-                  ) : strings.length === 0 ? (
-                    <div className="log-line dim" style={{ fontSize: 12 }}>No printable runs found.</div>
-                  ) : (
-                    (() => {
-                      const q = stringFilter.trim().toLowerCase();
-                      const visible = q
-                        ? strings.filter(s => s.text.toLowerCase().includes(q) || fmtAddr(s.addr).toLowerCase().includes(q))
-                        : strings;
-                      return (
-                        <div className="log-console" style={{ maxHeight: 260, overflow: 'auto', padding: 0 }}>
-                          {visible.length === 0 ? (
-                            <div className="log-line dim" style={{ padding: 10 }}>No strings match the filter</div>
-                          ) : visible.map((s, i) => (
-                            <div
-                              key={i}
-                              className="hex-row"
-                              style={{ cursor: 'pointer' }}
-                              title="Open in the address explorer"
-                              onClick={() => setExplorerTarget({ addr: s.addr, ts: Date.now() })}
-                            >
-                              <span style={{ color: 'var(--accent)', fontFamily: 'var(--font-mono)', fontSize: 11, flexShrink: 0 }}>
-                                {fmtAddr(s.addr)}
-                              </span>
-                              <span style={{ color: 'var(--text-ghost)', fontFamily: 'var(--font-mono)', fontSize: 10, flexShrink: 0, padding: '0 10px' }}>
-                                {s.enc}
-                              </span>
-                              <span style={{ color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)', fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                {s.text}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      );
-                    })()
-                  )}
-                </div>
-              )}
-
-              <AddressExplorer
-                api={api}
-                enabled={!!result}
-                sessionOpen={!!result?.session}
-                jumpTarget={explorerTarget}
-              />
         </div>
       </div>
     </>

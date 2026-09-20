@@ -50,6 +50,7 @@ class StealthConfig:
     """
     method: AccessMethod = AccessMethod.DIRECT
     driver_path: str | None = None
+    driver_key: str | None = None  # BYO selector: key from drivers/byo/*.json or built-in key
 
     # Read-traffic shaping (applied when the transport is active)
     enable_jitter: bool = False

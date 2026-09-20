@@ -1,6 +1,9 @@
-import React, { useState, useEffect, useCallback, useRef, Component } from 'react';
+import React, { useState, useEffect, useCallback, useRef, Component, createContext, useContext } from 'react';
 import Titlebar from './components/Titlebar';
 import Sidebar from './components/Sidebar';
+
+export const ToastContext = createContext(() => {});
+export const ConfirmContext = createContext(() => {});
 
 // Error boundary to prevent single-page crashes from taking down the whole app (council T3 fix)
 class PageErrorBoundary extends Component {
@@ -34,19 +37,20 @@ class PageErrorBoundary extends Component {
     return this.props.children;
   }
 }
+import DashboardPage from './components/DashboardPage';
 import EnginesPage from './components/EnginesPage';
 import ProcessesPage from './components/ProcessesPage';
 import DumpPage from './components/DumpPage';
 import ResultsPage from './components/ResultsPage';
-import SpooferPage from './components/SpooferPage';
 import DiffPage from './components/DiffPage';
 import MemoryViewerPage from './components/MemoryViewerPage';
 import ACMonitorPage from './components/ACMonitorPage';
 import AnalyzerPage from './components/AnalyzerPage';
 import DiagnosticsPage from './components/DiagnosticsPage';
+import DriverBayPage from './components/DriverBayPage';
 import SettingsPage from './components/SettingsPage';
 import ConfigEditorPage from './components/ConfigEditorPage';
-import BridgeStatus from './components/BridgeStatus';
+import CommandPalette from './components/CommandPalette';
 
 // One-time migration: ouroboros_ → bifrost_ prefix (brand consolidation)
 if (!localStorage.getItem('bifrost_migrated')) {
@@ -75,11 +79,11 @@ function saveSession(key, value) {
 export default function App() {
   const [page, setPage] = useState(() => loadSession('page', 'engines'));
   const [stealth, setStealth] = useState(() => {
-    // Legacy session values: 'extreme' became 'cr3'; unknown -> safe default.
     const saved = loadSession('stealth', 'auto');
     if (saved === 'extreme') return 'cr3';
     return ['auto', 'direct', 'hijack', 'driver', 'cr3'].includes(saved) ? saved : 'auto';
   });
+  const [driverKey, setDriverKey] = useState(() => loadSession('driverKey', null));
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [theme, setTheme] = useState(() => {
     const saved = loadSession('theme', 'midnight');
@@ -99,12 +103,70 @@ export default function App() {
   const [dumpOptions, setDumpOptions] = useState({ forceDiscovery: true, regenerate: false });
   const [accessInfo, setAccessInfo] = useState(null);
   const [lastDump, setLastDump] = useState(() => loadSession('lastDump', null));
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [toasts, setToasts] = useState([]);
+  const [confirm, setConfirm] = useState({ open: false, title: '', body: '', confirmLabel: 'Confirm', onConfirm: null });
 
   const api = window.bifrost;
+
+  const toast = useCallback((msg, type = 'success') => {
+    const id = Date.now() + Math.random();
+    setToasts(t => [...t, { id, msg, type }]);
+    setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 2500);
+  }, []);
+
+  const copyWithToast = useCallback(async (text, label = 'Copied to clipboard') => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast(label, 'success');
+    } catch {
+      toast('Copy failed', 'error');
+    }
+  }, [toast]);
+
+  const confirmDestructive = useCallback(({ title, body, confirmLabel = 'Confirm', onConfirm }) => {
+    setConfirm({ open: true, title, body, confirmLabel, onConfirm });
+  }, []);
+
+  // expose via window globals for non-React consumers — window.bifrost is frozen via contextBridge, so use __bifrost_* helpers
+  useEffect(() => {
+    try {
+      const b = window.bifrost;
+      if (b && Object.isExtensible(b)) {
+        b.toast = toast;
+        b.copyWithToast = copyWithToast;
+        b.confirmDestructive = confirmDestructive;
+      }
+    } catch {}
+    window.__bifrost_toast = toast;
+    window.__bifrost_copyWithToast = copyWithToast;
+    window.__bifrost_confirmDestructive = confirmDestructive;
+    // also expose on bifrost via defineProperty fallback if extensible check missed
+    try {
+      if (window.bifrost) {
+        try { Object.defineProperty(window.bifrost, 'toast', { value: toast, writable: true, configurable: true }); } catch {}
+        try { Object.defineProperty(window.bifrost, 'copyWithToast', { value: copyWithToast, writable: true, configurable: true }); } catch {}
+        try { Object.defineProperty(window.bifrost, 'confirmDestructive', { value: confirmDestructive, writable: true, configurable: true }); } catch {}
+      }
+    } catch {}
+  }, [toast, copyWithToast, confirmDestructive]);
+
+  // Custom event bridge for explicit navigation (Dashboard/EnginesPage CTA)
+  useEffect(() => {
+    const h = (e) => { if (e?.detail) setPage(e.detail); };
+    window.addEventListener('bifrost:navigate', h);
+    // expose direct setter for EnginesPage CTA fallback
+    window.__bifrost_navigate = (p) => setPage(p);
+    return () => {
+      window.removeEventListener('bifrost:navigate', h);
+      try { delete window.__bifrost_navigate; } catch {}
+    };
+  }, []);
 
   // Persist session state
   useEffect(() => { saveSession('page', page); }, [page]);
   useEffect(() => { saveSession('stealth', stealth); }, [stealth]);
+  useEffect(() => { saveSession('driverKey', driverKey); }, [driverKey]);
   useEffect(() => {
     saveSession('theme', theme);
     document.documentElement.setAttribute('data-theme', theme);
@@ -182,10 +244,11 @@ export default function App() {
       setDumpProgress(p => ({ ...p, running: false }));
       if (msg?.type !== 'result' || !msg.data) return;
       if (msg.data.error) {
-        // Terminal failure — single console entry. The backend reports one
-        // result error; main.js mirrors it here. The dedicated error
-        // channel carries state only, so this text never doubles.
-        addLog(`[ERROR] ${msg.data.error}`, 'error');
+        if (msg.data.code === 'BUSY') {
+          addLog(`[BUSY] ${msg.data.error}`, 'warn');
+        } else {
+          addLog(`[ERROR] ${msg.data.error}`, 'error');
+        }
         return;
       }
       setDumpResults(msg.data);
@@ -214,7 +277,7 @@ export default function App() {
 
     const settings = loadSession('settings', {});
 
-    api.startDump({
+    const dumpArgs = {
       engine: eng,
       pid: procPid,
       name: procName,
@@ -222,7 +285,12 @@ export default function App() {
       webhook: (settings.discordWebhook || '').trim(),
       force_discovery: dumpOptions.forceDiscovery,
       regenerate: dumpOptions.regenerate,
-    });
+    };
+    // BYO driver: only send when kernel mode and a key is selected
+    if ((stealth === 'driver' || stealth === 'cr3') && driverKey) {
+      dumpArgs.driver = driverKey;
+    }
+    api.startDump(dumpArgs);
   }, [api, stealth, dumpOptions]);
 
   const startDump = useCallback(() => {
@@ -248,6 +316,20 @@ export default function App() {
     addLog('Cancellation requested — dump will stop at the next checkpoint', 'warn');
   }, [api, addLog]);
 
+  // beforeunload guard if dump/analyze is running
+  // Note: analyzing state lives in AnalyzerPage; we check a window flag if needed.
+  useEffect(() => {
+    const handler = (e) => {
+      const analyzing = window.__bifrost_analyzing === true;
+      if (dumpProgress.running || analyzing) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [dumpProgress.running]);
+
   // Stall watchdog: a running dump that stops emitting events (progress,
   // logs, terminal) for 45s is wedged or silently dead. Warn once per
   // episode and point at Diagnostics instead of waiting forever.
@@ -267,11 +349,16 @@ export default function App() {
     return () => clearInterval(timer);
   }, [dumpProgress.running, addLog]);
 
-  // Keyboard shortcuts
+  // Keyboard shortcuts + Cmd+K palette
   useEffect(() => {
     const handler = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setPaletteOpen(o => !o);
+        return;
+      }
       if (e.ctrlKey && !e.shiftKey && !e.altKey) {
-        const pages = ['engines', 'processes', 'dump', 'results', 'spoofer', 'diff', 'memory', 'acmonitor', 'analyzer', 'diag', 'config', 'settings'];
+        const pages = ['dashboard', 'engines', 'processes', 'dump', 'results', 'diff', 'memory', 'acmonitor', 'analyzer', 'diag', 'driverbay', 'config', 'settings'];
         const num = parseInt(e.key);
         if (num >= 1 && num <= pages.length) {
           e.preventDefault();
@@ -293,11 +380,13 @@ export default function App() {
 
   const renderPage = () => {
     switch (page) {
+      case 'dashboard':
+        return <DashboardPage />;
       case 'engines':
         return (
           <EnginesPage
             selected={selectedEngine}
-            onSelect={(e) => { setSelectedEngine(e); setPage('processes'); }}
+            onSelect={(e) => { setSelectedEngine(e); }}
           />
         );
       case 'processes':
@@ -325,6 +414,9 @@ export default function App() {
             accessInfo={accessInfo}
             lastDump={lastDump}
             onRedump={() => runDumpTarget(lastDump)}
+            stealth={stealth}
+            driverKey={driverKey}
+            setDriverKey={setDriverKey}
           />
         );
       case 'results':
@@ -335,8 +427,6 @@ export default function App() {
             setDumpResults={setDumpResults}
           />
         );
-      case 'spoofer':
-        return <SpooferPage />;
       case 'diff':
         return <DiffPage />;
       case 'memory':
@@ -347,6 +437,8 @@ export default function App() {
         return <AnalyzerPage />;
       case 'diag':
         return <DiagnosticsPage />;
+      case 'driverbay':
+        return <DriverBayPage driverKey={driverKey} setDriverKey={setDriverKey} stealth={stealth} setStealth={setStealth} />;
       case 'config':
         return <ConfigEditorPage />;
       case 'settings':
@@ -357,50 +449,63 @@ export default function App() {
   };
 
   return (
-    <>
-      <Titlebar onMenuToggle={() => setSidebarOpen(o => !o)} />
-      <Sidebar
-        page={page}
-        setPage={setPage}
-        stealth={stealth}
-        setStealth={setStealth}
-        bridgeStatus={bridgeStatus}
-        open={sidebarOpen}
-        onClose={() => setSidebarOpen(false)}
-      />
-      <main className="main-content-full">
-        {staleBackend && (
-          <div style={{
-            padding: '10px 16px',
-            background: 'var(--warn-soft)',
-            borderBottom: '1px solid var(--warn)',
-            color: 'var(--warn)',
-            fontSize: 12,
-            fontWeight: 600,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 10,
-          }}>
-            <span style={{
-              width: 7, height: 7, borderRadius: '50%',
-              background: 'var(--warn)', flexShrink: 0,
-            }} />
-            <span>
-              Backend code has been updated but the running Python subprocess
-              is from a previous build — fully quit and relaunch the app for
-              the latest fixes to take effect. (Verify via Settings → About.)
-            </span>
+    <ToastContext.Provider value={toast}>
+      <ConfirmContext.Provider value={confirmDestructive}>
+        <Titlebar onMenuToggle={() => setSidebarOpen(o => !o)} sidebarOpen={sidebarOpen} />
+        <Sidebar
+          page={page}
+          setPage={setPage}
+          stealth={stealth}
+          setStealth={setStealth}
+          bridgeStatus={bridgeStatus}
+          open={sidebarOpen}
+          onClose={() => setSidebarOpen(false)}
+        />
+        <main className="main-content-full">
+          {staleBackend && (
+            <div className="banner">
+              <span className="banner-dot" />
+              <span>
+                Backend code has been updated but the running Python subprocess
+                is from a previous build — fully quit and relaunch the app for
+                the latest fixes to take effect. (Verify via Settings → About.)
+              </span>
+            </div>
+          )}
+          <div className="main-content-inner">
+            <PageErrorBoundary key={page}>
+              {renderPage()}
+            </PageErrorBoundary>
+          </div>
+          <div className="toast-container" role="status" aria-live="polite">
+            {toasts.map(t => (
+              <div key={t.id} className={`toast toast-${t.type}`}>{t.msg}</div>
+            ))}
+          </div>
+        </main>
+        <CommandPalette
+          open={paletteOpen}
+          setOpen={setPaletteOpen}
+          onNavigate={setPage}
+          onAction={(fn) => {
+            if (fn === 'toggleTheme') setTheme(t => t === 'midnight' ? 'paper' : t === 'paper' ? 'terminal' : 'midnight');
+            else if (fn === 'startDump') startDump();
+            else if (fn === 'copyCpp') copyWithToast('C++ header copied', 'success');
+          }}
+        />
+        {confirm.open && (
+          <div className="cmdk-overlay" onClick={() => setConfirm(c => ({ ...c, open: false }))} role="dialog" aria-modal="true" aria-label={confirm.title}>
+            <div className="cmdk-panel" onClick={e => e.stopPropagation()} style={{ padding: 16 }}>
+              <h3 style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>{confirm.title}</h3>
+              <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 16 }}>{confirm.body}</p>
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                <button className="btn" onClick={() => setConfirm(c => ({ ...c, open: false }))}>Cancel</button>
+                <button className="btn btn-primary" onClick={() => { const fn = confirm.onConfirm; setConfirm(c => ({ ...c, open: false })); if (fn) fn(); }}>{confirm.confirmLabel}</button>
+              </div>
+            </div>
           </div>
         )}
-        <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--border)' }}>
-          <BridgeStatus />
-        </div>
-        <div className="main-content-inner">
-          <PageErrorBoundary key={page}>
-            {renderPage()}
-          </PageErrorBoundary>
-        </div>
-      </main>
-    </>
+      </ConfirmContext.Provider>
+    </ToastContext.Provider>
   );
 }

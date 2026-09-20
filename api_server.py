@@ -11,12 +11,11 @@ _busy_stream = None
 
 # Import existing logic
 from gui_bridge import (
-    KNOWN_GAME_EXES, list_processes, run_dump, run_spoof, run_spoof_info,
-    run_spoof_restore, run_generate, run_read_memory, run_ac_detect,
+    KNOWN_GAME_EXES, list_processes, run_dump, run_generate, run_read_memory, run_write_memory, run_ac_detect,
     run_test_webhook, cancel_operation,
     run_analyze_probe, run_analyze, run_decompile_fn, run_analyze_export,
     run_hexdump_at, run_disasm_at, run_xrefs_at, run_symbols, run_strings,
-    run_debug_snapshot,
+    run_debug_snapshot, run_driver_list, run_driver_test,
 )
 from gui_bridge import _op_begin, _op_end, _op_result_error
 
@@ -89,8 +88,6 @@ def process_command(cmd_line):
             try:
                 if command == 'dump':
                     run_dump(args)
-                elif command == 'spoof':
-                    run_spoof(args)
                 elif command == 'generate':
                     run_generate(args)
                 elif command == 'analyze':
@@ -173,14 +170,11 @@ def process_command(cmd_line):
         if command == 'list_processes':
             list_processes()
             response = _pick_result(captured)
-        elif command == 'spoof_info':
-            run_spoof_info(args)
-            response = _pick_result(captured)
-        elif command == 'spoof_restore':
-            run_spoof_restore(args)
-            response = _pick_result(captured)
         elif command == 'read_memory':
             run_read_memory(args)
+            response = _pick_result(captured)
+        elif command == 'write_memory':
+            run_write_memory(args)
             response = _pick_result(captured)
         elif command == 'ac_detect':
             run_ac_detect(args)
@@ -211,6 +205,12 @@ def process_command(cmd_line):
             response = _pick_result(captured)
         elif command == 'debug_snapshot':
             run_debug_snapshot(args)
+            response = _pick_result(captured)
+        elif command == 'driver_list':
+            run_driver_list(args)
+            response = _pick_result(captured)
+        elif command == 'driver_test':
+            run_driver_test(args)
             response = _pick_result(captured)
         elif command == 'ping':
             response = {

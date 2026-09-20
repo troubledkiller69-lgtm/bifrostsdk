@@ -1,0 +1,11 @@
+{
+  "key": "example_bulk",
+  "filename": "example_bulk.sys",
+  "service_name": "ExampleBulk",
+  "device_path": "\\\\.\\ExampleBulk",
+  "strategy": "generic_bulk",
+  "ioctl_read": "0x222003",
+  "ioctl_write": "0x222007",
+  "known_hashes": [],
+  "description": "Template — replace filename/device/ioctls with your driver's values. Strategy generic_bulk = Intel-style QIQ bulk."
+}

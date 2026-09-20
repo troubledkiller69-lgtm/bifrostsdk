@@ -143,6 +143,163 @@ DRIVER_PROFILES: dict[str, DriverProfile] = {
     ),
 }
 
+def _parse_ioctl(v):
+    if v is None:
+        return 0
+    if isinstance(v, int):
+        return v
+    s = str(v).strip()
+    try:
+        return int(s, 0)
+    except:
+        return 0
+
+def _load_byo_profiles():
+    """Scan drivers/byo/*.json and merge into DRIVER_PROFILES. BYO keys override built-ins."""
+    # Resolve BYO directories: dev (repo/drivers/byo) and frozen (exe/drivers/byo)
+    candidates = []
+    try:
+        dev_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "byo")
+        candidates.append(dev_dir)
+    except:
+        pass
+    try:
+        if getattr(sys, "frozen", False):
+            exe_dir = os.path.join(os.path.dirname(sys.executable), "drivers", "byo")
+            candidates.append(exe_dir)
+        # Also check repo relative when running from gui/extra
+        alt = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "drivers", "byo")
+        alt = os.path.abspath(alt)
+        if alt not in candidates:
+            candidates.append(alt)
+    except:
+        pass
+    for byo_dir in candidates:
+        if not os.path.isdir(byo_dir):
+            continue
+        for fname in os.listdir(byo_dir):
+            if not fname.lower().endswith(".json"):
+                continue
+            if fname.lower() == "drivers.json":
+                continue
+            if fname.lower() == "readme.md":
+                continue
+            path = os.path.join(byo_dir, fname)
+            try:
+                data = open(path, "r", encoding="utf-8").read()
+                obj = __import__("json").loads(data)
+            except Exception as e:
+                print(f"[BYO] skip {fname}: {e}")
+                continue
+            # Allow single profile or {key:profile} map or list
+            profiles = []
+            if isinstance(obj, dict) and "filename" in obj and "key" in obj:
+                profiles = [obj]
+            elif isinstance(obj, dict) and "key" in obj and "filename" not in obj:
+                # maybe wrapped
+                profiles = [obj]
+            elif isinstance(obj, list):
+                profiles = obj
+            elif isinstance(obj, dict):
+                # map of key -> profile
+                for k, v in obj.items():
+                    if isinstance(v, dict) and "filename" in v:
+                        v.setdefault("key", k)
+                        profiles.append(v)
+                    elif k.lower().endswith(".sys"):
+                        continue
+            for p in profiles:
+                try:
+                    key = str(p.get("key") or p.get("filename","").replace(".sys","")).lower().strip()
+                    if not key:
+                        continue
+                    filename = p.get("filename")
+                    if not filename:
+                        continue
+                    service = p.get("service_name") or key
+                    device = p.get("device_path") or p.get("device") or f"\\\\.\\{service}"
+                    strategy = str(p.get("strategy") or "generic_bulk").lower()
+                    # Map strategy string to DriverType
+                    strat_map = {
+                        "intel": DriverType.INTEL_NAL,
+                        "msi": DriverType.MSI_RTCORE,
+                        "wdt": DriverType.DELL_WDT,
+                        "dell_wdt": DriverType.DELL_WDT,
+                        "corsair": DriverType.CORSAIR_LL,
+                        "gigabyte": DriverType.GIGABYTE_GIO,
+                        "gio": DriverType.GIGABYTE_GIO,
+                        "custom": DriverType.CUSTOM,
+                        "generic_bulk": DriverType.CUSTOM,
+                        "generic_dword": DriverType.CUSTOM,
+                        "generic": DriverType.CUSTOM,
+                    }
+                    dtype = strat_map.get(strategy, DriverType.CUSTOM)
+                    known = p.get("known_hashes") or p.get("sha256") or []
+                    if isinstance(known, str):
+                        known = [known]
+                    read_code = _parse_ioctl(p.get("ioctl_read"))
+                    write_code = _parse_ioctl(p.get("ioctl_write"))
+                    # fallback to strategy default if not provided
+                    if read_code == 0 or write_code == 0:
+                        # keep 0, Generic strategy will error clearly
+                        pass
+                    prof = DriverProfile(
+                        driver_type=dtype,
+                        filename=filename,
+                        service_name=service,
+                        device_path=device,
+                        known_hashes=[h.lower() for h in known if isinstance(h, str)],
+                        ioctl_read=read_code,
+                        ioctl_write=write_code,
+                    )
+                    # stash byo meta for UI
+                    prof._byo_meta = {"strategy": strategy, "description": p.get("description",""), "source_json": fname}
+                    DRIVER_PROFILES[key] = prof
+                    print(f"[BYO] loaded {key} -> {filename} ({strategy}) from {fname}")
+                except Exception as e:
+                    print(f"[BYO] failed to load profile in {fname}: {e}")
+        # Also support single drivers.json in byo dir
+        dj = os.path.join(byo_dir, "drivers.json")
+        if os.path.isfile(dj):
+            try:
+                obj = __import__("json").loads(open(dj, "r", encoding="utf-8").read())
+                # reuse same logic
+                profiles = []
+                if isinstance(obj, dict) and "drivers" in obj:
+                    profiles = obj["drivers"]
+                elif isinstance(obj, list):
+                    profiles = obj
+                elif isinstance(obj, dict):
+                    for k, v in obj.items():
+                        if isinstance(v, dict) and "filename" in v:
+                            v.setdefault("key", k)
+                            profiles.append(v)
+                for p in profiles:
+                    key = str(p.get("key") or p.get("filename","").replace(".sys","")).lower().strip()
+                    if not key or key in DRIVER_PROFILES and not str(p.get("byo","")).lower() == "true":
+                        # allow override if explicitly byo
+                        pass
+                    filename = p.get("filename")
+                    if not filename: continue
+                    service = p.get("service_name") or key
+                    device = p.get("device_path") or f"\\\\.\\{service}"
+                    strategy = str(p.get("strategy") or "generic_bulk").lower()
+                    strat_map = {"intel": DriverType.INTEL_NAL, "msi": DriverType.MSI_RTCORE, "wdt": DriverType.DELL_WDT, "corsair": DriverType.CORSAIR_LL, "gigabyte": DriverType.GIGABYTE_GIO, "generic_bulk": DriverType.CUSTOM, "generic_dword": DriverType.CUSTOM, "custom": DriverType.CUSTOM}
+                    dtype = strat_map.get(strategy, DriverType.CUSTOM)
+                    known = p.get("known_hashes") or p.get("sha256") or []
+                    if isinstance(known, str): known = [known]
+                    prof = DriverProfile(driver_type=dtype, filename=filename, service_name=service, device_path=device, known_hashes=[h.lower() for h in known if isinstance(h, str)], ioctl_read=_parse_ioctl(p.get("ioctl_read")), ioctl_write=_parse_ioctl(p.get("ioctl_write")))
+                    prof._byo_meta = {"strategy": strategy, "description": p.get("description",""), "source_json": "drivers.json"}
+                    DRIVER_PROFILES[key] = prof
+            except Exception as e:
+                print(f"[BYO] drivers.json load failed: {e}")
+
+# Load BYO at import time — must run after DRIVER_PROFILES is defined
+try:
+    _load_byo_profiles()
+except Exception as e:
+    print(f"[BYO] loader error: {e}")
+
 def enable_privilege(privilege_name: str) -> bool:
     """Enable a specific token privilege for the current process."""
     # Set explicit argtypes to handle 64-bit pointers correctly

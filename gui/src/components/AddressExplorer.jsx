@@ -81,8 +81,8 @@ export default function AddressExplorer({ api, enabled, sessionOpen, jumpTarget 
 
   if (!enabled) {
     return (
-      <div className="hunter-config-card" style={{ padding: 14 }}>
-        <div className="hunter-config-title">Address Explorer</div>
+      <div className="page-config-card" style={{ padding: 14 }}>
+        <div className="page-config-title">Address Explorer</div>
         <div className="log-line dim" style={{ fontSize: 12 }}>
           {sessionOpen
             ? 'Run an analyze job first, then explore any address in the image.'
@@ -93,8 +93,8 @@ export default function AddressExplorer({ api, enabled, sessionOpen, jumpTarget 
   }
 
   return (
-    <div className="hunter-config-card" style={{ padding: 14 }}>
-      <div className="hunter-config-title" style={{ marginBottom: 10 }}>
+    <div className="page-config-card" style={{ padding: 14 }}>
+      <div className="page-config-title" style={{ marginBottom: 10 }}>
         Address Explorer
         {current && (
           <span style={{ marginLeft: 10, color: 'var(--accent)', fontFamily: 'var(--font-mono)', fontSize: 12 }}>
@@ -108,20 +108,12 @@ export default function AddressExplorer({ api, enabled, sessionOpen, jumpTarget 
         )}
       </div>
 
-      <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
-        <input
-          type="text"
-          className="input-field"
-          style={{ fontFamily: 'var(--font-mono)', flex: 1 }}
-          placeholder="0x180001000"
-          value={addrText}
-          spellCheck={false}
-          onChange={(e) => setAddrText(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') onGo(); }}
-        />
-        <button className="btn btn-secondary" onClick={onGo} disabled={busy}>
-          Go
-        </button>
+      <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap' }}>
+        <input type="text" className="input-field" style={{ fontFamily: 'var(--font-mono)', flex: '1 1 160px', background: '#050507', borderColor: 'rgba(0,0,0,0.6)', boxShadow: 'inset 1px 1px 0 rgba(0,0,0,0.6)' }} placeholder="0x180001000" value={addrText} spellCheck={false} onChange={(e) => setAddrText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') onGo(); }} />
+        <button className="btn btn-secondary" onClick={onGo} disabled={busy}>Go</button>
+        <button className="btn" style={{ padding: '6px 10px', fontSize: 11 }} onClick={() => { if (current && navigator.clipboard) navigator.clipboard.writeText(fmtAddr(current.addr)).then(()=>window.bifrost?.toast && window.bifrost.toast('Copied','success')); }} disabled={!current}>Copy</button>
+        <button className="btn" style={{ padding: '6px 10px', fontSize: 11 }} onClick={() => { if (current) load(current.addr - 256, view); }} disabled={!current || busy} title="-0x100">‹ 256</button>
+        <button className="btn" style={{ padding: '6px 10px', fontSize: 11 }} onClick={() => { if (current) load(current.addr + 256, view); }} disabled={!current || busy} title="+0x100">256 ›</button>
       </div>
 
       <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
@@ -239,3 +231,4 @@ export default function AddressExplorer({ api, enabled, sessionOpen, jumpTarget 
     </div>
   );
 }
+

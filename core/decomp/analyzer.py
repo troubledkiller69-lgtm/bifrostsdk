@@ -25,6 +25,13 @@ from .rizin_engine import (
     rizin_binary,
     rizin_version,
 )
+try:
+    from .ida_engine import find_ida_exe, ida_available, ida_version, ida_analyze
+except Exception:
+    find_ida_exe = lambda: None
+    ida_available = lambda: False
+    ida_version = lambda exe=None: ""
+    ida_analyze = None
 
 _DEFAULT_FN_LIMIT = 400
 _EXPORT_FN_CAP = 500        # hard cap for the batch export pass
@@ -146,6 +153,7 @@ def probe() -> dict:
     only when present."""
     exe = rizin_binary()
     rz_dir = find_rizin_dir()
+    ida_exe = find_ida_exe()
     out = {
         "rizin": {
             "available": exe is not None,
@@ -153,8 +161,13 @@ def probe() -> dict:
             "version": rizin_version(exe) if exe else "",
             "decompiler": False,
         },
+        "ida": {
+            "available": bool(ida_exe and ida_available()),
+            "exe": ida_exe or "",
+            "version": ida_version(ida_exe) if ida_exe else "",
+        },
         "iced": {"available": True},
-        "default_engine": "rizin-ghidra" if exe else "iced-x86",
+        "default_engine": "rizin-ghidra" if exe else ("ida" if ida_exe else "iced-x86"),
     }
     if exe:
         try:
@@ -177,18 +190,74 @@ def analyze(source: dict, sink: LogSink, limit: int = _DEFAULT_FN_LIMIT) -> dict
 
     if source.get("engine") == "iced":
         return _analyze_iced(file_path, extra, sink)
+    if source.get("engine") == "ida":
+        return _analyze_ida(file_path, extra, sink, limit)
 
+    # Auto-pick: rizin-ghidra first (we ship it), IDA if user has it and rizin missing
     exe = rizin_binary()
     if not exe:
-        sink.log(
-            "rizin engine not provisioned — falling back to iced-x86 linear "
-            "disassembly (no decompiler). Run tools/provision_rizin.ps1 once "
-            "for full Ghidra decompilation.",
-            "warn",
-        )
+        ida_exe = find_ida_exe()
+        if ida_exe and ida_available() and ida_analyze:
+            sink.log(f"rizin missing — trying IDA at {ida_exe}", "warn")
+            try:
+                return _analyze_ida(file_path, extra, sink, limit)
+            except Exception as exc:
+                sink.log(f"IDA batch failed ({exc}) — falling back to iced-x86", "warn")
+        else:
+            sink.log(
+                "rizin engine not provisioned — falling back to iced-x86 linear "
+                "disassembly (no decompiler). Run tools/provision_rizin.ps1 once "
+                "for full Ghidra decompilation.",
+                "warn",
+            )
         return _analyze_iced(file_path, extra, sink)
 
     return _analyze_rizin(file_path, extra, sink, limit)
+
+
+def _analyze_ida(file_path: str, extra: dict, sink: LogSink, limit: int) -> dict:
+    ida_exe = find_ida_exe()
+    if not ida_exe or not ida_analyze:
+        raise RuntimeError("IDA not found — checked Downloads\\IDA_Test and Program Files")
+    sink.progress("Opening", 5)
+    sink.log(f"ida: {ida_exe}")
+    sink.log("Running IDA auto-analysis (batch)... this is the slow part")
+    sink.progress("Analysis", 10)
+    data = ida_analyze(file_path, timeout=180)
+    functions = data.get("functions") or []
+    imagebase = data.get("imagebase")
+    sink.log(f"IDA found {len(functions)} functions (imagebase {imagebase:#x} if mapped)")
+
+    # Cache full map like rizin path
+    with CURRENT["lock"]:
+        CURRENT["symbols"] = {f["name"]: f["addr"] for f in functions if f.get("name")}
+
+    # Rank like rizin: named first biggest, anonymous >=8 bytes
+    named = [f for f in functions if f["name"]]
+    anonymous = sorted((f for f in functions if not f["name"] and f["size"] >= 8), key=lambda f: f["size"], reverse=True)
+    ranked = sorted(named, key=lambda f: f["size"], reverse=True) + anonymous
+    trimmed = ranked[: max(1, int(limit))]
+
+    # No persistent session for IDA batch — store file only for hex/disasm
+    _close_current()
+    with CURRENT["lock"]:
+        CURRENT["session"] = None
+        CURRENT["source"] = {"file": file_path, **extra}
+        CURRENT["engine"] = "ida"
+        CURRENT["cache"] = {}
+
+    sink.progress("Loaded", 100)
+    return {
+        "engine": "ida",
+        "decompiler": True,
+        "session": False,
+        "ida_exe": ida_exe,
+        "file": file_path,
+        "size": os.path.getsize(file_path),
+        "base": extra.get("base") or imagebase,
+        "functions": trimmed,
+        "total_functions": len(functions),
+    }
 
 
 def _analyze_iced(file_path: str, extra: dict, sink: LogSink) -> dict:

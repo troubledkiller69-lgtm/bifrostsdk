@@ -1,16 +1,10 @@
 ﻿"""
 BIFROST SDK — HardwareReader
 
-Free-standing reader for all hardware identifiers the spoofer touches.
+Free-standing reader for hardware identifiers (diagnostics + info).
 
-Extracted from `HardwareSpoofer.get_current_values()` and the inline `_extras`
-collection in `HardwareSpoofer.backup_current_values()`. Behavior is
-byte-identical to the source: same dict keys, same fallback strings, same
-PowerShell / `whoami` / `winreg` calls in the same order.
-
-The reader has no dependency on `HardwareSpoofer` or `DriverInterface`. It
-optionally accepts a `log_callback(msg: str)` for symmetry with the spoofer's
-logging hook.
+Standalone — no driver or spoofer dependency. Optionally accepts a
+`log_callback(msg: str)` for UI logging symmetry.
 
 Two public methods:
   - `read_summary()` — the 15-key dict UI consumers expect.
@@ -30,9 +24,7 @@ import subprocess
 import sys
 from typing import Callable, Dict, Optional, Tuple
 
-# Stable contract of the 15 keys read_summary() returns. UI consumers
-# (gui/src/components/SpooferPage.jsx) read these — adding a key here
-# requires a parallel UI update.
+# Stable contract of the 15 keys read_summary() returns.
 SUMMARY_KEYS: Tuple[str, ...] = (
     "mac", "guid", "disk", "disk_firmware", "gpu",
     "product_id", "hostname", "install_date",
@@ -50,7 +42,7 @@ _NON_WINDOWS_KEYS: Tuple[str, ...] = (
 # Registry path that holds nearly all BIOS / baseboard fields.
 _BIOS_KEY = r"HARDWARE\DESCRIPTION\System\BIOS"
 
-# PowerShell command timeout — matches the previous spoofer.py value.
+# PowerShell command timeout.
 _PS_TIMEOUT = 10
 
 # CREATE_NO_WINDOW so background subprocess calls don't flash a console.
@@ -290,12 +282,8 @@ class HardwareReader:
 
     def read_raw_registry_extras(self) -> Dict[str, object]:
         """
-        Return the raw registry values that backup_current_values() embeds
-        under `_extras`. Keys are sparse — only present when the read
-        succeeded. Used by restore_originals().
-
-        Key contract (must not change without bumping _BACKUP_SCHEMA_VERSION
-        on the spoofer side):
+        Return raw registry values formerly embedded under `_extras`.
+        Keys are sparse — only present when the read succeeded.
           - product_id_raw, build_guid, install_date_raw
           - bios_BaseBoardSerialNumber, bios_BaseBoardProduct,
             bios_BIOSVendor, bios_BIOSVersion, bios_BIOSReleaseDate,

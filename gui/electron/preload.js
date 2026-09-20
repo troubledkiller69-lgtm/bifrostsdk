@@ -52,28 +52,6 @@ contextBridge.exposeInMainWorld('bifrost', {
     return () => ipcRenderer.removeListener('dump-complete', handler);
   },
 
-  startSpoofing: (opts) => ipcRenderer.send('start-spoofing', opts),
-  onSpoofLog: (cb) => {
-    const handler = (_, data) => cb(data);
-    ipcRenderer.on('spoof-log', handler);
-    return () => ipcRenderer.removeListener('spoof-log', handler);
-  },
-  onSpoofError: (cb) => {
-    const handler = (_, data) => cb(data);
-    ipcRenderer.on('spoof-error', handler);
-    return () => ipcRenderer.removeListener('spoof-error', handler);
-  },
-  onSpoofProgress: (cb) => {
-    const handler = (_, data) => cb(data);
-    ipcRenderer.on('spoof-progress', handler);
-    return () => ipcRenderer.removeListener('spoof-progress', handler);
-  },
-  onSpoofComplete: (cb) => {
-    const handler = (_, data) => cb(data);
-    ipcRenderer.on('spoof-complete', handler);
-    return () => ipcRenderer.removeListener('spoof-complete', handler);
-  },
-
   startAnalyze: (opts) => ipcRenderer.send('start-analyze', opts),
   stopAnalyze: () => ipcRenderer.send('stop-analyze'),
   startAnalyzeExport: (opts) => ipcRenderer.send('start-analyze-export', opts),
@@ -86,6 +64,8 @@ contextBridge.exposeInMainWorld('bifrost', {
   analyzerSymbols: () => ipcRenderer.invoke('python-command', { command: 'analyzer_symbols', args: {} }),
   analyzerStrings: (minLen, cap) => ipcRenderer.invoke('python-command', { command: 'analyzer_strings', args: { min_len: minLen, cap } }),
   debugSnapshot: (includeThreads) => ipcRenderer.invoke('python-command', { command: 'debug_snapshot', args: { include_threads: !!includeThreads } }),
+  driverList: () => ipcRenderer.invoke('python-command', { command: 'driver_list', args: {} }),
+  driverTest: (driver, force) => ipcRenderer.invoke('python-command', { command: 'driver_test', args: { driver, force: !!force } }),
   onAnalyzeLog: (cb) => {
     const handler = (_, data) => cb(data);
     ipcRenderer.on('analyze-log', handler);
@@ -116,7 +96,6 @@ contextBridge.exposeInMainWorld('bifrost', {
     // removing listeners on arbitrary Electron IPC channels
     const ALLOWED_CHANNELS = [
       'dump-progress', 'dump-log', 'dump-error', 'dump-complete', 'dump-access',
-      'spoof-progress', 'spoof-log', 'spoof-error', 'spoof-complete',
       'analyze-progress', 'analyze-log', 'analyze-error', 'analyze-complete',
     ];
     if (ALLOWED_CHANNELS.includes(channel)) {

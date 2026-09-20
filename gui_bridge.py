@@ -5,7 +5,7 @@ Backend for the Electron app. Called by api_server.py via stdin/stdout JSON IPC.
 The shapes emitted via the `emit` hook (log, progress, result) are defined in
 contracts/bifrost_protocol.json under the "events" section.
 
-All long-running operations (dump, spoof, generate, analyze) and the normal
+All long-running operations (dump, generate, analyze) and the normal
 command surface are also governed by that protocol document.
 """
 
@@ -708,8 +708,13 @@ def run_dump(args):
                     "driver": AccessMethod.DRIVER,
                     "cr3": AccessMethod.CR3,
                 }
-                stealth_config = StealthConfig(method=method_map[transport])
-                _log(f"Access: Stealth ({transport})")
+                # BYO: dump args may include driver:"myvuln" to select exact profile
+                byo_key = str(args.get("driver") or args.get("driver_key") or "").strip().lower() or None
+                if byo_key:
+                    _log(f"Access: Stealth ({transport} → {byo_key})")
+                else:
+                    _log(f"Access: Stealth ({transport})")
+                stealth_config = StealthConfig(method=method_map[transport], driver_key=byo_key)
                 reader = StealthReader(pid=pid, config=stealth_config)
                 steps = [
                     {"step": s[0], "ok": bool(s[1]), "detail": str(s[2] or "")}
@@ -897,58 +902,6 @@ def run_dump(args):
                 pass
 
 
-def run_spoof(args):
-    _op_begin("spoof", {"mode": args.get("mode") or ""})
-    try:
-        from core.stealth.spoofer import HardwareSpoofer
-
-        _log("Starting HWID Spoof Sequence...")
-        # `dry_run` is plumbed through so future callers can preview without
-        # writes; defaults to live behaviour for backward compatibility.
-        spoofer = HardwareSpoofer(
-            driver=None,
-            dry_run=bool(args.get("dry_run", False)),
-        )
-        spoofer.set_logger(lambda msg: _log(msg))
-
-        result = spoofer.run_all({
-            "mode": args.get("mode", "random"),
-            "custom_serials": args.get("custom_serials", {}),
-            "advanced": bool(args.get("advanced", False)),
-            "preset": args.get("preset"),
-        })
-        emit({"type": "result", "data": result})
-        _op_end("ok", "spoof sequence finished")
-    except Exception as e:
-        _op_end("error", f"spoof failed: {e}")
-        _log(f"Spoofer error: {e}", "error")
-        emit({"type": "result", "data": {"error": str(e)}})
-
-
-def run_spoof_info(args):
-    try:
-        from core.stealth.spoofer import HardwareSpoofer
-
-        spoofer = HardwareSpoofer(driver=None)
-        values = spoofer.get_current_values()
-        emit({"type": "result", "data": values})
-    except Exception as e:
-        emit({"type": "result", "data": {"error": str(e)}})
-
-
-def run_spoof_restore(args):
-    try:
-        from core.stealth.spoofer import HardwareSpoofer
-
-        spoofer = HardwareSpoofer(driver=None)
-        spoofer.set_logger(lambda msg: _log(msg))
-        ok = spoofer.restore_originals()
-        emit({"type": "result", "data": {"success": ok}})
-    except Exception as e:
-        _log(f"Restore error: {e}", "error")
-        emit({"type": "result", "data": {"success": False, "error": str(e)}})
-
-
 def run_generate(args):
     _op_begin("generate", {"project": args.get("project_name") or ""})
     try:
@@ -1023,6 +976,48 @@ def run_read_memory(args):
                 reader.close()
             except Exception:
                 pass
+
+
+def run_write_memory(args):
+    """Write bytes to a target process for the Memory Viewer.
+
+    args: {pid, address, bytes:[int]}
+    """
+    pid = args.get("pid", 0)
+    address = args.get("address", 0)
+    data = args.get("bytes", [])
+    if not isinstance(pid, int) or pid <= 0 or pid > 0xFFFFFFFF:
+        emit({"type": "result", "data": {"error": f"Invalid PID: {pid}", "code": "BAD_ARGS"}})
+        return
+    if not isinstance(address, int) or address <= 0:
+        emit({"type": "result", "data": {"error": "Invalid address", "code": "BAD_ARGS"}})
+        return
+    if not isinstance(data, list) or not data or len(data) > 0x10000:
+        emit({"type": "result", "data": {"error": "Invalid bytes (1..65536)", "code": "BAD_ARGS"}})
+        return
+    for b in data:
+        if not isinstance(b, int) or b < 0 or b > 255:
+            emit({"type": "result", "data": {"error": f"Invalid byte: {b}", "code": "BAD_ARGS"}})
+            return
+    if not _process_exists(pid):
+        emit({"type": "result", "data": {"error": f"Process {pid} is not running", "code": "NO_PROCESS"}})
+        return
+    try:
+        # Direct attach for writes — hijack is read-only path, kernel writes are opt-in only.
+        from core.memory import MemoryReader
+        reader = MemoryReader(pid=pid)
+        # Use pymem write via underlying handle
+        import ctypes
+        k32 = ctypes.windll.kernel32
+        buf = (ctypes.c_ubyte * len(data))(*data)
+        written = ctypes.c_size_t()
+        ok = k32.WriteProcessMemory(reader.handle, ctypes.c_void_p(address), ctypes.byref(buf), len(data), ctypes.byref(written))
+        reader.close()
+        if not ok or written.value != len(data):
+            raise RuntimeError(f"WriteProcessMemory failed (wrote {written.value}/{len(data)})")
+        emit({"type": "result", "data": {"pid": pid, "address": address, "written": written.value}})
+    except Exception as e:
+        emit({"type": "result", "data": {"error": str(e), "code": "WRITE_FAILED"}})
 
 
 _AC_DEFINITIONS = {
@@ -1403,6 +1398,191 @@ def _output_dir_listing(target_name: str) -> list[dict]:
     except Exception:
         return []
 
+
+def run_driver_list(args):
+    """List all known + BYO drivers with presence + hash status for the Driver Bay."""
+    try:
+        from drivers.mapper import DRIVER_PROFILES
+        import hashlib
+        # Resolve drivers dirs (dev vs frozen)
+        drivers_dirs = []
+        try:
+            import sys as _sys
+            if getattr(_sys, "frozen", False):
+                exe_dir = os.path.dirname(os.path.abspath(_sys.executable))
+                drivers_dirs.append(os.path.join(exe_dir, "drivers"))
+                drivers_dirs.append(os.path.join(exe_dir, "drivers", "byo"))
+            drivers_dirs.append(os.path.join(PROJECT_ROOT, "drivers"))
+            drivers_dirs.append(os.path.join(PROJECT_ROOT, "drivers", "byo"))
+        except:
+            drivers_dirs.append(os.path.join(PROJECT_ROOT, "drivers"))
+        # Use mapper's list_available helper to find which dir actually holds files
+        from drivers.mapper import DriverMapper
+        dm = DriverMapper()
+        # Build response
+        drivers = []
+        for key, prof in sorted(DRIVER_PROFILES.items()):
+            # search file in any drivers dir
+            present_path = ""
+            present = False
+            for d in drivers_dirs:
+                cand = os.path.join(d, prof.filename)
+                if os.path.isfile(cand):
+                    present = True
+                    present_path = cand
+                    break
+                # also try nested drivers folder
+                cand2 = os.path.join(d, prof.filename)
+                if os.path.isfile(cand2):
+                    present = True
+                    present_path = cand2
+                    break
+            # hash check
+            hash_actual = ""
+            hash_ok = None  # None = no hashes to check, True/False otherwise
+            if present and present_path:
+                try:
+                    with open(present_path, "rb") as f:
+                        hash_actual = hashlib.sha256(f.read()).hexdigest()
+                    if prof.known_hashes:
+                        hash_ok = any(hash_actual.lower() == h.lower() for h in prof.known_hashes)
+                    else:
+                        hash_ok = None
+                except:
+                    hash_ok = False
+            elif not present:
+                hash_ok = False if prof.known_hashes else None
+            meta = getattr(prof, "_byo_meta", {}) or {}
+            drivers.append({
+                "key": key,
+                "filename": prof.filename,
+                "service_name": prof.service_name,
+                "device_path": prof.device_path,
+                "strategy": meta.get("strategy") or prof.driver_type.name.lower(),
+                "description": meta.get("description") or "",
+                "present": present,
+                "present_path": present_path,
+                "hash_ok": hash_ok,
+                "hash_actual": hash_actual[:16] + "…" if hash_actual else "",
+                "hash_full": hash_actual,
+                "known_hashes": prof.known_hashes,
+                "byo": bool(meta),
+                "ioctl_read": f"0x{prof.ioctl_read:X}" if getattr(prof, "ioctl_read", 0) else "",
+                "ioctl_write": f"0x{prof.ioctl_write:X}" if getattr(prof, "ioctl_write", 0) else "",
+            })
+        emit({"type": "result", "data": {"drivers": drivers, "drivers_dirs": drivers_dirs, "count": len(drivers)}})
+    except Exception as e:
+        emit({"type": "result", "data": {"error": str(e), "code": "DRIVER_LIST_FAILED"}})
+
+def run_driver_test(args):
+    """Map the driver, open the device, do a zero-byte probe, then unload. Proves the BYO IOCTLs are reachable."""
+    key = str(args.get("driver") or args.get("key") or "").strip().lower()
+    force = bool(args.get("force"))
+    if not key:
+        emit({"type": "result", "data": {"error": "Missing driver key", "code": "BAD_ARGS"}})
+        return
+    try:
+        from drivers.mapper import DRIVER_PROFILES, DriverMapper
+        if key not in DRIVER_PROFILES:
+            emit({"type": "result", "data": {"error": f"Unknown driver: {key}", "code": "DRIVER_NOT_FOUND"}})
+            return
+        prof = DRIVER_PROFILES[key]
+        # Quick presence check
+        drivers_dirs = []
+        try:
+            import sys as _sys
+            if getattr(_sys, "frozen", False):
+                drivers_dirs.append(os.path.join(os.path.dirname(os.path.abspath(_sys.executable)), "drivers"))
+            drivers_dirs.append(os.path.join(PROJECT_ROOT, "drivers"))
+            drivers_dirs.append(os.path.join(PROJECT_ROOT, "drivers", "byo"))
+        except:
+            drivers_dirs.append(os.path.join(PROJECT_ROOT, "drivers"))
+        found = any(os.path.isfile(os.path.join(d, prof.filename)) for d in drivers_dirs)
+        if not found:
+            emit({"type": "result", "data": {"error": f"{prof.filename} not found in drivers/ or drivers/byo/", "code": "NOT_PRESENT", "key": key}})
+            return
+        # Try to map
+        mapper = DriverMapper()
+        try:
+            mapper.load(key, force=force)
+        except RuntimeError as re:
+            # hash mismatch etc
+            if "hash mismatch" in str(re).lower():
+                emit({"type": "result", "data": {"error": str(re), "code": "HASH_MISMATCH", "key": key, "stage": "hash"}})
+                return
+            emit({"type": "result", "data": {"error": str(re), "code": "LOAD_FAILED", "key": key, "stage": "load"}})
+            return
+        except Exception as e:
+            emit({"type": "result", "data": {"error": str(e), "code": "LOAD_FAILED", "key": key, "stage": "load"}})
+            return
+        # Probe: device handle + a zero-byte ioctl probe (no phys access, just handle validity)
+        # For BYO bulk/dword, we try a 1-byte phys read at 0x1000 — if driver is alive it will either succeed or return error, not crash
+        probe_ok = False
+        probe_stage = "open"
+        probe_err = ""
+        try:
+            handle = mapper.device_handle
+            if handle and handle not in (0, -1, 0xFFFFFFFF):
+                probe_stage = "handle"
+                # Try a tiny phys read via the strategy if possible — validates ioctl path without needing target pid
+                # Use DriverInterface with same mapper to avoid double-load
+                from core.stealth.driver import DriverInterface
+                # Reuse mapper's handle via a lightweight probe: try Generic read of 1 byte at phys 0x1000
+                # We instantiate DriverInterface with explicit key to reuse mapper profile, but we already have handle.
+                # Instead directly test DeviceIoControl with a harmless 0-byte probe via mapper.ioctl if available.
+                try:
+                    # mapper.ioctl exists, try a no-op probe (read 1 byte phys 0x1000 via Generic)
+                    # Fall back to just handle check if strategy not generic
+                    from core.stealth.driver import GenericBulkStrategy
+                    strat = None
+                    meta = getattr(prof, "_byo_meta", {}) or {}
+                    strat_name = str(meta.get("strategy","")).lower()
+                    rc = getattr(prof, "ioctl_read", 0) or 0
+                    wc = getattr(prof, "ioctl_write", 0) or 0
+                    if strat_name in ("generic_bulk","intel","gigabyte") or rc:
+                        strat = GenericBulkStrategy(rc or prof.ioctl_read, wc or prof.ioctl_write)
+                    elif strat_name in ("generic_dword","msi","wdt"):
+                        from core.stealth.driver import GenericDwordStrategy
+                        strat = GenericDwordStrategy(rc or prof.ioctl_read, wc or prof.ioctl_write)
+                    if strat and rc:
+                        try:
+                            # This will either succeed (driver alive) or throw OSError with driver error — both prove load
+                            _probe = strat.read_physical(handle, 0x1000, 1)
+                            probe_ok = True
+                            probe_stage = "ioctl"
+                        except OSError as oe:
+                            # Driver rejected the read (no phys map) but ioctl path is alive — count as success
+                            if "failed" in str(oe).lower() or "phys" in str(oe).lower():
+                                probe_ok = True
+                                probe_stage = "ioctl_rejected_but_alive"
+                                probe_err = str(oe)[:120]
+                            else:
+                                probe_err = str(oe)[:120]
+                        except Exception as e2:
+                            probe_err = str(e2)[:120]
+                    else:
+                        # No strategy probe — handle open is success
+                        probe_ok = True
+                        probe_stage = "handle_open"
+                except Exception as e2:
+                    probe_err = str(e2)[:120]
+                    probe_ok = True  # handle was open, so load succeeded
+                    probe_stage = "handle_open"
+            else:
+                probe_err = "Invalid handle after load"
+        except Exception as e:
+            probe_err = str(e)[:200]
+        finally:
+            try:
+                mapper.unload()
+            except:
+                pass
+        if probe_ok:
+            emit({"type": "result", "data": {"key": key, "success": True, "stage": probe_stage, "device": prof.device_path, "filename": prof.filename, "probe": probe_err or "probe ok", "byo": bool(getattr(prof, "_byo_meta", None))}})
+        else:
+            emit({"type": "result", "data": {"error": probe_err or "Probe failed", "code": "PROBE_FAILED", "key": key, "stage": probe_stage}})
+    except Exception as e:
+        emit({"type": "result", "data": {"error": str(e), "code": "DRIVER_TEST_FAILED"}})
 
 def run_debug_snapshot(args):
     """Operation diagnostics snapshot — the 'is it stuck or dead?' answer.

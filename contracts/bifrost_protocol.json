@@ -25,7 +25,7 @@
     },
     "streaming": {
       "style": "fire-and-forget with stream tag; cancellation via `cancel` command + shared CANCEL_EVENT",
-      "channels": ["start-dump", "start-spoofing", "start-generation", "start-analyze", "start-analyze-export"],
+      "channels": ["start-dump", "start-generation", "start-analyze", "start-analyze-export"],
       "responses": "arrive asynchronously via stdout as typed events tagged with `stream`",
       "cancellation": "renderer sends `cancel` {operation}; backend sets CANCEL_EVENT, operations abort at checkpoints and emit a result with code CANCELLED"
     }
@@ -54,23 +54,11 @@
       "response": "{type:'result', data: array of {pid, name, window, engine}}",
       "notes": "Returns filtered process list with engine annotation from KNOWN_GAME_EXES."
     },
-    "spoof_info": {
-      "direction": "request-response",
-      "args": {},
-      "response": "{type:'result', data: object (current spoof state)}",
-      "notes": "Query current spoofing status."
-    },
     "bridge_info": {
       "direction": "request-response",
       "args": {},
       "response": "{type:'result', data: {build_stamp, protocol_version, features}}",
       "notes": "Return live backend build signature + feature flags so the UI can verify which revision is running."
-    },
-    "spoof_restore": {
-      "direction": "request-response",
-      "args": {},
-      "response": "{type:'result', data: object (result of restore)}",
-      "notes": "Restore original spoof state."
     },
     "read_memory": {
       "direction": "request-response",
@@ -82,6 +70,16 @@
       "response": "{type:'result', data: {pid, address, size, bytes: [int]}} or {type:'result', data: {error, code}}",
       "notes": "Raw process memory read for the Memory Viewer. Uses stealth access with direct fallback."
     },
+    "write_memory": {
+      "direction": "request-response",
+      "args": {
+        "pid": "number (32-bit)",
+        "address": "number (hex-parsed)",
+        "bytes": "array of int (0..255, 1..65536)"
+      },
+      "response": "{type:'result', data: {pid, address, written: number}} or {type:'result', data: {error, code}}",
+      "notes": "Raw process memory write for the Memory Viewer. Direct attach only — never a kernel driver. ptr chain deref uses read_memory repeatedly."
+    },
     "ac_detect": {
       "direction": "request-response",
       "args": {},
@@ -91,8 +89,8 @@
     "analyze_probe": {
       "direction": "request-response",
       "args": {},
-      "response": "{type:'result', data: {rizin: {available, exe, version, decompiler}, iced: {available}, default_engine}}",
-      "notes": "Reports decompiler engine availability. rizin+rz-ghidra when provisioned (tools/provision_rizin.ps1), iced-x86 otherwise. No rizin process spawned when missing."
+      "response": "{type:'result', data: {rizin: {available, exe, version, decompiler}, ida: {available, exe, version}, iced: {available}, default_engine}}",
+      "notes": "Reports decompiler engine availability. rizin+rz-ghidra when provisioned (tools/provision_rizin.ps1), iced-x86 fallback, ida when idat.exe found (tools/provision_ida.ps1 or manual IDA install). No engine process spawned on probe."
     },
     "decompile_fn": {
       "direction": "request-response",
@@ -154,10 +152,25 @@
     "cancel": {
       "direction": "request-response",
       "args": {
-        "operation": "string (dump | spoof | generate | analyze | analyze_export)"
+        "operation": "string (dump | generate | analyze | analyze_export)"
       },
       "response": "{status:'ok', cancelled: <operation>}",
       "notes": "Sets the shared CANCEL_EVENT. Streaming operations abort at their next checkpoint."
+    },
+    "driver_list": {
+      "direction": "request-response",
+      "args": {},
+      "response": "{type:'result', data: {drivers: [{key, filename, service_name, device_path, strategy, description, present, hash_ok, hash_actual, byo, known_hashes}], drivers_dir, byo_dir}}",
+      "notes": "List all known + BYO drivers, whether .sys is present on disk, and hash verification status. Powers the Driver Bay UI for BYO workflows."
+    },
+    "driver_test": {
+      "direction": "request-response",
+      "args": {
+        "driver": "string (key from driver_list, e.g. 'intel' or BYO 'myvuln')",
+        "force": "boolean (skip hash mismatch, default false)"
+      },
+      "response": "{type:'result', data: {key, success, stage, error, code, device, handles, probe}} or {error, code: BAD_ARGS|DRIVER_NOT_FOUND|HASH_MISMATCH|LOAD_FAILED}",
+      "notes": "Maps the driver via NtLoadDriver -> CreateFile(device) -> probe read (DeviceIoControl 0-byte probe). Unmaps immediately. Proves the BYO driver's IOCTLs are reachable without leaving the driver resident."
     },
     "test_webhook": {
       "direction": "request-response",
@@ -177,18 +190,13 @@
         "pid": "number",
         "name": "string (exe name)",
         "stealth": "string enum (auto | driver | hijack | direct | cr3)",
+        "driver": "string (optional BYO key from driver_list, e.g. 'intel' or 'myvuln' — only when stealth is driver/cr3)",
         "webhook": "string (optional url)",
         "force_discovery": "boolean",
         "regenerate": "boolean"
       },
       "events_emitted": ["dump-log", "dump-progress", "dump-complete", "dump-error", "dump-access"],
       "notes": "Long-running. Triggers run_dump in gui_bridge -> engine dumper. Cancellable via CANCEL_EVENT."
-    },
-    "spoof": {
-      "direction": "fire-and-forget",
-      "args": "object (spoof options)",
-      "events_emitted": ["spoof-log", "spoof-progress", "spoof-complete", "spoof-error"],
-      "notes": ""
     },
     "generate": {
       "direction": "fire-and-forget",
@@ -203,9 +211,10 @@
           "type": "file | module",
           "path": "string (file source)",
           "pid": "number (module source)",
-          "module": "string (module source, exe/dll name)"
+          "module": "string (module source, exe/dll name)",
+          "engine": "string (auto | rizin | ida | iced; default auto)"
         },
-        "engine": "string (auto | rizin | iced; default auto)",
+        "engine": "string (auto | rizin | ida | iced; default auto)",
         "limit": "number (function list cap, 1..2000, default 400)"
       },
       "events_emitted": ["analyze-log", "analyze-progress", "analyze-complete", "analyze-error"],
@@ -302,7 +311,7 @@
     "preload_surface": "gui/electron/preload.js",
     "main_command_and_streaming": "gui/electron/main.js (sendCommand, sendStreamingCommand, ipc handlers, stream routing)",
     "python_dispatch": "api_server.py (process_command + tagged emit override)",
-    "bridge_command_handlers": "gui_bridge.py (run_dump, run_spoof*, run_read_memory, run_ac_detect, cancel_operation, KNOWN_GAME_EXES)",
+    "bridge_command_handlers": "gui_bridge.py (run_dump, run_read_memory, run_write_memory, run_ac_detect, cancel_operation, KNOWN_GAME_EXES)",
     "renderer_listeners": "gui/src/App.jsx + per-page usage"
   }
 }

@@ -6,7 +6,7 @@ BIFROST SDK requires `requireAdministrator` elevation because:
 
 1. **OpenProcess with PROCESS_VM_READ** — reading protected game process memory requires `SeDebugPrivilege`, only available to elevated processes.
 2. **Kernel driver loading** — the stealth system optionally loads vulnerable signed drivers for physical memory access.
-3. **SMBIOS physical memory access** — the hardware spoofer reads/writes physical memory tables via driver IOCTLs.
+3. **Physical memory access** — kernel driver paths read/write physical memory via IOCTLs (used for CR3/PT walks and memory acquisition).
 
 The whole Electron app runs elevated because the Python backend inherits the parent's elevation. Elevating only the backend would add complexity with no real boundary gain — both processes live on the same machine.
 
@@ -41,8 +41,7 @@ The stealth subsystem is the highest-risk part of the tool by design:
 - It maps signed-but-vulnerable drivers and performs physical memory reads, manual page-table walks, and CR3 bypass reads.
 - Kernel-capable code stays dormant by default: transports are explicit (`direct`/`hijack`/`driver`/`cr3`), with no auto-fallback ladder that can silently escalate into a driver map. Every connect self-tests with a probe read and records the attach steps, so a failed kernel attach reports the exact failing step instead of pretending success.
 - Failures were historically silent (zero-filled reads, swallowed exceptions). After 4.0.0, unmapped pages raise, short physical reads raise, and CR3 resolution failure raises instead of returning a placeholder.
-- The spoofer's backup snapshot (including the SAM-derived value) is written next to the source tree during a spoof run. It's deleted on the restore happy path. A crash mid-run leaves it on disk — treat `core/stealth/.spoof_backup.json` as sensitive if you crash between spoof and restore.
-- Attach attempts are logged through the dump log channel, so what the access pipeline did is visible in the UI.
+ - Attach attempts are logged through the dump log channel, so what the access pipeline did is visible in the UI.
 
 ## Data Storage
 
@@ -51,7 +50,6 @@ The stealth subsystem is the highest-risk part of the tool by design:
 | Discord webhook URL | `localStorage` (Electron AppData) | Low — user-provided, validated |
 | Session state (page, engine, process) | `localStorage` | None |
 | Dump output (.h, .json) | `output/` directory | Low — game offsets |
-| Spoof backup snapshot | `core/stealth/.spoof_backup.json` | **High** — hardware identity + SAM-derived value |
 
 No credentials, API keys, or tokens are otherwise stored.
 

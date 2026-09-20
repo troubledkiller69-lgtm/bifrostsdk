@@ -56,7 +56,6 @@ export default function BridgeStatus() {
       }
     };
     bind(api.onDumpError);
-    bind(api.onSpoofError);
     bind(api.onAnalyzeError);
 
     return () => {
@@ -65,51 +64,26 @@ export default function BridgeStatus() {
     };
   }, [api, bumpError]);
 
-  const getColor = () => {
-    if (status === 'ok') return 'var(--success)';
-    if (status === 'degraded') return 'var(--warn)';
-    if (status === 'offline') return 'var(--error)';
-    return 'var(--text-muted)';
-  };
+  const pillClass =
+    status === 'ok' ? 'bridge-pill ok' :
+    status === 'degraded' ? 'bridge-pill degraded' :
+    status === 'offline' ? 'bridge-pill offline' : 'bridge-pill';
 
-  const label = status === 'ok' ? 'Bridge OK' : 
-                status === 'degraded' ? 'Bridge Degraded' : 
+  const label = status === 'ok' ? 'Bridge OK' :
+                status === 'degraded' ? 'Bridge Degraded' :
                 status === 'offline' ? 'Bridge Offline' : 'Checking...';
 
   return (
-    <div style={{
-      display: 'flex',
-      alignItems: 'center',
-      gap: 8,
-      padding: '4px 10px',
-      borderRadius: 6,
-      background: 'rgba(255,255,255,0.06)',
-      fontSize: 12,
-      color: 'var(--text-primary)',
-      border: `1px solid ${getColor()}33`
-    }}>
-      <div style={{ 
-        width: 8, 
-        height: 8, 
-        borderRadius: '50%', 
-        background: getColor(),
-        flexShrink: 0
-      }} />
+    <div className={pillClass}>
+      <span className="dot" />
       <span>{label}</span>
       {protocolVersion && (
-        <span style={{ opacity: 0.6, fontSize: 10 }}>
+        <span className="pill-ver">
           v{protocolVersion}
         </span>
       )}
       {recentErrors.length > 0 && (
-        <span style={{
-          background: 'var(--warn-soft)',
-          color: 'var(--warn)',
-          padding: '1px 5px',
-          borderRadius: 3,
-          fontSize: 10,
-          fontFamily: 'var(--font-mono)'
-        }}>
+        <span className="pill-err">
           {recentErrors.length} err
         </span>
       )}
