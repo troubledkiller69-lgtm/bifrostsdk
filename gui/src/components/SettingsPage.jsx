@@ -342,6 +342,22 @@ export default function SettingsPage({ theme = 'midnight', setTheme }) {
           </div>
         </div>
 
+        {/* Agent access (MCP) */}
+        <div className="settings-section" style={{ padding: 14 }}>
+          <div className="settings-section-title" style={{ fontFamily: 'var(--font-display)', letterSpacing: '0.10em' }}>Agent Access</div>
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.7 }}>
+            <div><span style={{ color: '#7EFF3F', textShadow: '0 0 6px rgba(126,255,63,0.28)' }}>mcp_server.py</span> — stdio JSON-RPC, zero dependencies, 19 tools (dump, analyze, decompile, sigs, drivers, memory…).</div>
+            <div style={{ marginTop: 4 }}>Point any MCP client at it with the canonical Python 3.14. Registered as <span style={{ color: 'var(--text)' }}>bifrost</span> in <span style={{ color: 'var(--text)' }}>opencode.json</span>.</div>
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 8, background: '#030303', border: '1px solid rgba(0,0,0,0.6)', borderRadius: 3, padding: '8px 10px', boxShadow: 'inset 1px 1px 0 rgba(0,0,0,0.6)' }}>
+              <span style={{ flex: 1, color: 'var(--text)', wordBreak: 'break-all' }}>python mcp_server.py</span>
+              <button className="btn" style={{ padding: '3px 10px', fontSize: 10 }} onClick={() => {
+                const snippet = JSON.stringify({ bifrost: { command: ['python', 'mcp_server.py'] } }, null, 2);
+                if (navigator.clipboard) navigator.clipboard.writeText(snippet).then(() => window.bifrost?.toast && window.bifrost.toast('MCP config copied', 'success'));
+              }}>Copy config</button>
+            </div>
+          </div>
+        </div>
+
         {/* About + Danger in one row on desktop */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           <div className="settings-section" style={{ padding: 14 }}>
