@@ -43,7 +43,7 @@ def _load_command_lists() -> Tuple[List[str], List[str]]:
             ["ping", "bridge_info", "list_processes",
              "read_memory", "write_memory", "ac_detect", "test_webhook", "cancel",
              "analyze_probe", "decompile_fn", "analyzer_hexdump",
-             "analyzer_disasm_at", "analyzer_xrefs", "analyzer_symbols", "analyzer_strings",
+             "analyzer_disasm_at", "analyzer_xrefs", "analyzer_callgraph", "analyzer_search", "analyzer_symbols", "analyzer_strings",
              "debug_snapshot"],
             ["dump", "generate", "analyze", "analyze_export"],
         )

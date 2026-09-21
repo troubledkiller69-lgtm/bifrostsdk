@@ -35,6 +35,40 @@ class TestParseAxtj:
         assert rizin_engine.parse_axtj(payload) == []
 
 
+class TestParseIij:
+    def test_empty_and_invalid_payloads(self):
+        assert rizin_engine.parse_iij(None) == []
+        assert rizin_engine.parse_iij("not json") == []
+
+    def test_imports_normalized(self):
+        payload = json.dumps([
+            {"ordinal": 1, "bind": "NONE", "type": "FUNC", "name": "CreateFileW",
+             "libname": "KERNEL32.dll", "plt": 0x180001000},
+            {"ordinal": 2, "type": "FUNC", "name": "", "libname": "X.dll"},
+            "junk",
+        ])
+        out = rizin_engine.parse_iij(payload)
+        assert out == [{"name": "CreateFileW", "lib": "KERNEL32.dll", "plt": 0x180001000}]
+
+
+class TestParsePdfjCalls:
+    def test_empty_and_invalid_payloads(self):
+        assert rizin_engine.parse_pdfj_calls(None) == []
+        assert rizin_engine.parse_pdfj_calls("") == []
+        assert rizin_engine.parse_pdfj_calls("not json") == []
+
+    def test_calls_extracted_sorted_unique(self):
+        payload = json.dumps({"ops": [
+            {"offset": 0x1000, "type": "CALL", "jump": 0x2000},
+            {"offset": 0x1005, "type": "MOV", "jump": 0},
+            {"offset": 0x100A, "type": "UCALL", "jump": 0x3000},
+            {"offset": 0x100F, "type": "CALL", "jump": 0x2000},
+            {"offset": 0x1014, "type": "CALL"},  # thunk, no target
+            {"offset": 0x1019, "type": "JMP", "jump": 0x4000},
+        ]})
+        assert rizin_engine.parse_pdfj_calls(payload) == [0x2000, 0x3000]
+
+
 class TestImageMapRaw:
     def test_raw_dump_mapping(self, tmp_path):
         p = os.path.join(str(tmp_path), "mod.bin")
@@ -156,5 +190,111 @@ class TestAnalyzerExplorer:
             assert out["xrefs"][0]["from"] == 0x140001000
             assert out["xrefs"][0]["type"] == "CALL"
             assert runner.commands == ["axtj @ 0x140000100"]
+        finally:
+            self._clear()
+
+    def _open_rizin_session(self, tmp_path):
+        p = os.path.join(str(tmp_path), "mod.bin")
+        with open(p, "wb") as f:
+            f.write(b"\x90\xc3" * 0x800)
+        runner = rizin_engine.FakeRunner()
+        runner.responses["pdfj @ 0x140000100"] = json.dumps({"ops": [
+            {"offset": 0x140000100, "type": "CALL", "jump": 0x140001000},
+            {"offset": 0x140000105, "type": "RET"},
+        ]})
+        runner.responses["axtj @ 0x140000100"] = json.dumps([
+            {"from": 0x140002000, "type": "CALL", "op": "caller"},
+            {"from": 0x140002010, "type": "LEA", "op": "data"},
+        ])
+        session = rizin_engine.RizinSession(p, runner=runner)
+        with analyzer.CURRENT["lock"]:
+            analyzer.CURRENT["source"] = {"file": p, "base": 0x140000000}
+            analyzer.CURRENT["session"] = session
+            analyzer.CURRENT["engine"] = "rizin-ghidra"
+            analyzer.CURRENT["cache"] = {}
+            analyzer.CURRENT["symbols"] = {"callee": 0x140001000, "caller": 0x140002000}
+        return runner
+
+    def test_callgraph_at_merges_calls_and_callers(self, tmp_path):
+        runner = self._open_rizin_session(tmp_path)
+        try:
+            out = analyzer.callgraph_at(0x140000100)
+            assert out.get("code") is None
+            assert out["calls"] == [{"addr": 0x140001000, "name": "callee"}]
+            # LEA xref excluded — callers are CALL only
+            assert out["called_by"] == [{"from": 0x140002000, "name": "caller"}]
+            assert runner.commands == ["pdfj @ 0x140000100", "axtj @ 0x140000100"]
+        finally:
+            self._clear()
+
+    def test_callgraph_at_requires_rizin(self, tmp_path):
+        self._open_raw_session(tmp_path)
+        try:
+            assert analyzer.callgraph_at(0x140000000)["code"] == "NO_RIZIN"
+        finally:
+            self._clear()
+
+    def test_callgraph_bad_args(self):
+        assert analyzer.callgraph_at(0)["code"] == "BAD_ARGS"
+
+
+class TestSearchCallsites:
+    def _open_search_session(self, tmp_path):
+        p = os.path.join(str(tmp_path), "mod.bin")
+        with open(p, "wb") as f:
+            f.write(b"\x90" * 0x40 + b"SuperSecretPassword123" + b"\x90" * 0x40)
+        runner = rizin_engine.FakeRunner()
+        runner.responses["iij"] = json.dumps([
+            {"name": "CreateFileW", "libname": "KERNEL32.dll", "plt": 0x140000500},
+            {"name": "CloseHandle", "libname": "KERNEL32.dll", "plt": 0x140000510},
+        ])
+        runner.responses["axtj @ 0x140000500"] = json.dumps([
+            {"from": 0x140000100, "type": "CALL", "op": "call CreateFileW"},
+        ])
+        session = rizin_engine.RizinSession(p, runner=runner)
+        with analyzer.CURRENT["lock"]:
+            analyzer.CURRENT["source"] = {"file": p, "base": 0x140000000}
+            analyzer.CURRENT["session"] = session
+            analyzer.CURRENT["engine"] = "rizin-ghidra"
+            analyzer.CURRENT["cache"] = {}
+            analyzer.CURRENT["symbols"] = {"caller": 0x140000100}
+        return runner
+
+    def _clear(self):
+        with analyzer.CURRENT["lock"]:
+            analyzer.CURRENT["source"] = None
+            analyzer.CURRENT["session"] = None
+            analyzer.CURRENT["engine"] = None
+            analyzer.CURRENT["cache"] = {}
+            analyzer.CURRENT["symbols"] = {}
+
+    def test_search_finds_import_string_and_ref(self, tmp_path):
+        self._open_search_session(tmp_path)
+        try:
+            out = analyzer.search_callsites("createfile")
+            assert out.get("code") is None
+            assert [i["name"] for i in out["imports"]] == ["CreateFileW"]
+            assert out["references"][0]["from"] == 0x140000100
+            assert out["references"][0]["from_name"] == "caller"
+            out2 = analyzer.search_callsites("supersecret")
+            assert any("SuperSecret" in s["text"] for s in out2["strings"])
+        finally:
+            self._clear()
+
+    def test_search_bad_args(self):
+        assert analyzer.search_callsites("")["code"] == "BAD_ARGS"
+        assert analyzer.search_callsites("x" * 129)["code"] == "BAD_ARGS"
+        assert analyzer.search_callsites("ok", cap=0)["code"] == "BAD_ARGS"
+
+    def test_search_requires_rizin(self, tmp_path):
+        p = os.path.join(str(tmp_path), "mod.bin")
+        with open(p, "wb") as f:
+            f.write(b"\x90" * 64)
+        with analyzer.CURRENT["lock"]:
+            analyzer.CURRENT["source"] = {"file": p, "base": 0x140000000}
+            analyzer.CURRENT["session"] = None
+            analyzer.CURRENT["engine"] = "iced-x86"
+        try:
+            assert analyzer.search_callsites("nop")["code"] == "NO_RIZIN"
         finally:
             self._clear()

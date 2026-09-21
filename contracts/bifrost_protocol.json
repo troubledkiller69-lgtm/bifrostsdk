@@ -126,6 +126,23 @@
       "response": "{type:'result', data: {addr, xrefs:[{from, type, op}]}} or {error, code: NO_SESSION | BAD_ARGS | NO_RIZIN | XREFS_FAILED}",
       "notes": "Cross-references to an address via rizin axtj. One-shot spawn, ~seconds."
     },
+    "analyzer_callgraph": {
+      "direction": "request-response",
+      "args": {
+        "addr": "number (VA in the open image, ideally a function entry)"
+      },
+      "response": "{type:'result', data: {addr, name, calls:[{addr, name}], called_by:[{from, name}]}} or {error, code: NO_SESSION | BAD_ARGS | NO_RIZIN | CALLS_FAILED | XREFS_FAILED}",
+      "notes": "Callers (axtj CALL) + callees (pdfj) of one function, names resolved via the session symbol map. One-shot spawns, ~seconds."
+    },
+    "analyzer_search": {
+      "direction": "request-response",
+      "args": {
+        "query": "string (case-insensitive substring, max 128 — e.g. GetAsyncKeyState, kernel32, password)",
+        "cap": "number, 1..500 (max code references returned, default 100)"
+      },
+      "response": "{type:'result', data: {query, imports:[{name, lib, plt}], imports_total, strings:[{addr, text}], references:[{target, target_name, from, from_name, type}], targets_scanned, truncated}} or {error, code: NO_SESSION | BAD_ARGS | NO_RIZIN | IMPORTS_FAILED | STRINGS_FAILED}",
+      "notes": "Call-site search: matches import names + string contents, xrefs each hit (max 25 targets — each costs a rizin spawn, so large result sets take a minute). Rizin only."
+    },
     "analyzer_symbols": {
       "direction": "request-response",
       "args": {},
@@ -223,10 +240,11 @@
     "analyze_export": {
       "direction": "fire-and-forget",
       "args": {
-        "limit": "number (max functions exported, 1..2000, default 500)"
+        "limit": "number (max functions exported, 1..2000, default 500)",
+        "format": "string (split | single, default split — single concatenates into bundle.c; both write index.json)"
       },
       "events_emitted": ["analyze-log", "analyze-progress", "analyze-complete", "analyze-error"],
-      "notes": "Batch-decompiles the open session's largest functions to .c files in <source dir>/decomp/. Cancellable between functions."
+      "notes": "Batch-decompiles the open session's largest functions to <source dir>/decomp/. Cancellable between functions."
     }
   },
 

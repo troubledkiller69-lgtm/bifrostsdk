@@ -22,8 +22,9 @@ export default function AddressExplorer({ api, enabled, sessionOpen, jumpTarget 
   const [hexdump, setHexdump] = useState(null);
   const [disasm, setDisasm] = useState(null);
   const [xrefs, setXrefs] = useState(null);
+  const [callgraph, setCallgraph] = useState(null);
   const [err, setErr] = useState('');
-  const [view, setView] = useState('hex'); // hex | disasm | xrefs
+  const [view, setView] = useState('hex'); // hex | disasm | xrefs | calls
 
   // External jump requests (e.g. a Strings row click) — fire on ts change.
   useEffect(() => {
@@ -40,6 +41,8 @@ export default function AddressExplorer({ api, enabled, sessionOpen, jumpTarget 
     setBusy(true);
     setCurrent({ addr });
     if (showView) setView(showView);
+    // hex/disasm/xrefs load together (cheap-ish); the call graph costs two
+    // rizin spawns so it loads lazily only when its tab opens.
     const [h, d, x] = await Promise.allSettled([
       api.analyzerHexdump(addr, 256),
       api.analyzerDisasmAt(addr, 160),
@@ -59,6 +62,7 @@ export default function AddressExplorer({ api, enabled, sessionOpen, jumpTarget 
     setHexdump(hd.rows ? hd : null);
     setDisasm(dd.lines ? dd : null);
     setXrefs(Array.isArray(xd.xrefs) ? xd : null);
+    setCallgraph(null); // stale graph from the previous address
     const firstErr = [hd, dd, xd].find((r) => r && r.error);
     setErr(firstErr ? `${firstErr.code || 'ERROR'}: ${firstErr.error}` : '');
   };
@@ -72,6 +76,28 @@ export default function AddressExplorer({ api, enabled, sessionOpen, jumpTarget 
   const jump = (addr) => {
     setAddrText(fmtAddr(addr));
     load(addr, 'hex');
+  };
+
+  const loadCallgraph = async (addr) => {
+    if (!api || !addr) return;
+    setView('calls');
+    if (callgraph && callgraph.addr === addr) return; // fresh already
+    setBusy(true);
+    setErr('');
+    try {
+      const r = await api.analyzerCallgraph(addr);
+      const payload = unwrapPayload(r) || {};
+      if (payload.error) {
+        setCallgraph(null);
+        setErr(payload.code ? `${payload.code}: ${payload.error}` : payload.error);
+      } else {
+        setCallgraph(payload);
+      }
+    } catch (e) {
+      setCallgraph(null);
+      setErr(e?.message || String(e));
+    }
+    setBusy(false);
   };
 
   const followAsm = (addr) => {
@@ -131,6 +157,14 @@ export default function AddressExplorer({ api, enabled, sessionOpen, jumpTarget 
             {label}
           </button>
         ))}
+        <button
+          className={`btn ${view === 'calls' ? 'btn-primary' : 'btn-secondary'}`}
+          style={{ padding: '4px 12px', fontSize: 11 }}
+          onClick={() => current && loadCallgraph(current.addr)}
+          title="Callers + callees of this function (rizin, ~2 spawns)"
+        >
+          Calls
+        </button>
         {current && (
           <button
             className="btn btn-secondary"
@@ -226,6 +260,35 @@ export default function AddressExplorer({ api, enabled, sessionOpen, jumpTarget 
           )
         ) : (
           <div className="log-line dim" style={{ fontSize: 12 }}>No xrefs yet — hit Go.</div>
+        )
+      )}
+
+      {view === 'calls' && (
+        callgraph ? (
+          <div className="log-console" style={{ maxHeight: 320, overflow: 'auto', padding: '8px' }}>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-secondary)', marginBottom: 8 }}>
+              {callgraph.name || fmtAddr(callgraph.addr)}
+              <span style={{ color: 'var(--text-ghost)' }}> — {(callgraph.calls || []).length} callees · {(callgraph.called_by || []).length} callers</span>
+            </div>
+            <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text-muted)', marginBottom: 4 }}>Calls ↓</div>
+            {(callgraph.calls || []).length === 0 && <div className="log-line dim" style={{ fontSize: 11, marginBottom: 8 }}>No outgoing calls</div>}
+            {(callgraph.calls || []).map((c, i) => (
+              <div key={`c-${i}`} className="hex-row xref-row" onClick={() => jump(c.addr)} title="Jump to callee">
+                <span style={{ color: 'var(--accent)', fontFamily: 'var(--font-mono)', fontSize: 11 }}>{fmtAddr(c.addr)}</span>
+                <span style={{ color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)', fontSize: 11, padding: '0 10px' }}>{c.name || '—'}</span>
+              </div>
+            ))}
+            <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text-muted)', margin: '8px 0 4px' }}>Called by ↑</div>
+            {(callgraph.called_by || []).length === 0 && <div className="log-line dim" style={{ fontSize: 11 }}>No callers</div>}
+            {(callgraph.called_by || []).map((c, i) => (
+              <div key={`b-${i}`} className="hex-row xref-row" onClick={() => jump(c.from)} title="Jump to caller">
+                <span style={{ color: 'var(--accent)', fontFamily: 'var(--font-mono)', fontSize: 11 }}>{fmtAddr(c.from)}</span>
+                <span style={{ color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)', fontSize: 11, padding: '0 10px' }}>{c.name || '—'}</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="log-line dim" style={{ fontSize: 12 }}>{busy ? 'Scanning calls…' : 'Open the Calls tab to scan (rizin only).'}</div>
         )
       )}
     </div>

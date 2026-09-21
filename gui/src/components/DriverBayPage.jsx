@@ -40,13 +40,14 @@ export default function DriverBayPage({ driverKey, setDriverKey, stealth, setSte
 
   const presentCount = drivers ? drivers.filter(d=>d.present).length : 0;
   const byoCount = drivers ? drivers.filter(d=>d.byo).length : 0;
+  const loadedCount = drivers ? drivers.filter(d=>d.loaded===true).length : 0;
   const activeDriver = drivers?.find(d=>d.key===driverKey) || null;
 
   return (
     <>
       <div className="page-header" style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
         <div className="page-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}><span style={{ width: 3, height: 14, background: '#7EFF3F', boxShadow: '0 0 6px rgba(126,255,63,0.45)', borderRadius: 1, display: 'inline-block' }} />Driver Bay</div>
-        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: drivers ? '#7EFF3F' : 'var(--text-ghost)', letterSpacing: '0.08em' }}>● {presentCount}/{drivers?.length||0} PRESENT{byoCount?` · ${byoCount} BYO`:''}</span>
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: drivers ? '#7EFF3F' : 'var(--text-ghost)', letterSpacing: '0.08em' }}>● {presentCount}/{drivers?.length||0} PRESENT{byoCount?` · ${byoCount} BYO`:''}{loadedCount?` · ${loadedCount} LOADED`:''}</span>
         <div className="page-subtitle" style={{ width: '100%', marginTop: 2 }}>Bring your own vulnerable driver — drop .sys + .json into <span style={{ color: 'var(--text-ghost)', fontFamily: 'var(--font-mono)' }}>drivers/byo/</span> and test here. Stealth `driver`/`cr3` will pick it up.</div>
       </div>
 
@@ -79,6 +80,7 @@ export default function DriverBayPage({ driverKey, setDriverKey, stealth, setSte
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
                   <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 13, color: d.present ? '#f8fafc' : 'var(--text-muted)', letterSpacing: '0.04em', textTransform: 'uppercase' }}>{d.key}</span>
                   {d.byo && <span style={{ fontSize: 9, padding: '2px 6px', borderRadius: 3, background: 'rgba(126,255,63,0.14)', color: '#7EFF3F', fontFamily: 'var(--font-mono)', fontWeight: 700, letterSpacing: '0.06em' }}>BYO</span>}
+                  {d.loaded===true && <span style={{ fontSize: 9, padding: '2px 6px', borderRadius: 3, background: 'rgba(126,255,63,0.16)', color: '#7EFF3F', fontFamily: 'var(--font-mono)', fontWeight: 700, letterSpacing: '0.06em', boxShadow: '0 0 6px rgba(126,255,63,0.35)' }} title="Service is currently running in SCM — a previous Test Load or dump left it mapped">LOADED</span>}
                   <span style={{ marginLeft: 'auto', width: 7, height: 7, borderRadius: '50%', background: d.present ? '#7EFF3F' : '#d94a4a', boxShadow: d.present ? '0 0 6px rgba(126,255,63,0.45)' : 'none', flexShrink:0 }} />
                   <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: d.present ? 'var(--text-muted)' : '#d94a4a', letterSpacing: '0.04em' }}>{d.present ? 'PRESENT' : 'MISSING'}</span>
                 </div>

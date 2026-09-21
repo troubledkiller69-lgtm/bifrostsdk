@@ -26,12 +26,16 @@ from .rizin_engine import (
     rizin_version,
 )
 try:
-    from .ida_engine import find_ida_exe, ida_available, ida_version, ida_analyze
+    from .ida_engine import (
+        find_ida_exe, ida_available, ida_version, ida_analyze, _IdaCancelled,
+    )
 except Exception:
     find_ida_exe = lambda: None
     ida_available = lambda: False
     ida_version = lambda exe=None: ""
     ida_analyze = None
+    class _IdaCancelled(RuntimeError):
+        pass
 
 _DEFAULT_FN_LIMIT = 400
 _EXPORT_FN_CAP = 500        # hard cap for the batch export pass
@@ -40,11 +44,12 @@ _IDLE_TIMEOUT_SECS = 300    # close abandoned rizin sessions after 5 min
 
 # One live session per backend process (analyzer module is imported once).
 CURRENT = {
-    "session": None,          # RizinSession or None
+    "session": None,          # RizinSession or None (None for ida batch / iced)
     "source": None,           # dict describing what was loaded
-    "engine": None,           # 'rizin-ghidra' | 'iced-x86'
+    "engine": None,           # 'rizin-ghidra' | 'ida' | 'iced-x86'
     "cache": {},              # addr(int) -> {"code","name"}
     "symbols": {},            # name(str) -> addr(int) — full binary fn map
+    "functions": [],          # ranked function list (ida export needs it sans session)
     "lock": threading.Lock(),
 }
 
@@ -82,6 +87,7 @@ def _close_current():
         CURRENT["engine"] = None
         CURRENT["cache"] = {}
         CURRENT["symbols"] = {}
+        CURRENT["functions"] = []
         if session is not None:
             try:
                 session.close()
@@ -221,16 +227,27 @@ def _analyze_ida(file_path: str, extra: dict, sink: LogSink, limit: int) -> dict
         raise RuntimeError("IDA not found — checked Downloads\\IDA_Test and Program Files")
     sink.progress("Opening", 5)
     sink.log(f"ida: {ida_exe}")
-    sink.log("Running IDA auto-analysis (batch)... this is the slow part")
+    sink.log("Running IDA auto-analysis (batch)... this is the slow part (first run on a real binary can take 5-15 min; Cancel works)")
     sink.progress("Analysis", 10)
-    data = ida_analyze(file_path, timeout=180)
+    try:
+        # Decompile bodies for the top-N in the same run (hexrays) —
+        # IDA is one-shot, so there is no second chance per function.
+        data = ida_analyze(file_path, timeout=1500,
+                           cancel=sink.cancelled, log=lambda t: sink.log(t, "info"),
+                           decompile_limit=min(max(1, int(limit)), 100))
+    except Exception as exc:
+        if isinstance(exc, _IdaCancelled) or "cancelled" in str(exc).lower():
+            raise _Cancelled("IDA batch cancelled") from exc
+        raise
     functions = data.get("functions") or []
     imagebase = data.get("imagebase")
+    bodies = data.get("bodies") or {}
+    has_decompiler = bool(data.get("decompiler")) and len(bodies) > 0
     sink.log(f"IDA found {len(functions)} functions (imagebase {imagebase:#x} if mapped)")
-
-    # Cache full map like rizin path
-    with CURRENT["lock"]:
-        CURRENT["symbols"] = {f["name"]: f["addr"] for f in functions if f.get("name")}
+    if bodies:
+        sink.log(f"IDA decompiled {len(bodies)} functions via hexrays")
+    elif not data.get("decompiler"):
+        sink.log("IDA hexrays unavailable — function list only, no bodies", "warn")
 
     # Rank like rizin: named first biggest, anonymous >=8 bytes
     named = [f for f in functions if f["name"]]
@@ -238,18 +255,26 @@ def _analyze_ida(file_path: str, extra: dict, sink: LogSink, limit: int) -> dict
     ranked = sorted(named, key=lambda f: f["size"], reverse=True) + anonymous
     trimmed = ranked[: max(1, int(limit))]
 
-    # No persistent session for IDA batch — store file only for hex/disasm
+    # No persistent session for IDA batch — but bodies serve from cache,
+    # and the ranked list is kept so export works without a session.
     _close_current()
     with CURRENT["lock"]:
         CURRENT["session"] = None
         CURRENT["source"] = {"file": file_path, **extra}
         CURRENT["engine"] = "ida"
+        CURRENT["functions"] = list(trimmed)
         CURRENT["cache"] = {}
+        CURRENT["symbols"] = {f["name"]: f["addr"] for f in functions if f.get("name")}
+        for addr, code in bodies.items():
+            if len(CURRENT["cache"]) >= _CACHE_CAP:
+                break
+            name = next((f["name"] for f in trimmed if f["addr"] == addr), "")
+            CURRENT["cache"][addr] = {"code": code, "name": name}
 
     sink.progress("Loaded", 100)
     return {
         "engine": "ida",
-        "decompiler": True,
+        "decompiler": has_decompiler,
         "session": False,
         "ida_exe": ida_exe,
         "file": file_path,
@@ -257,6 +282,7 @@ def _analyze_ida(file_path: str, extra: dict, sink: LogSink, limit: int) -> dict
         "base": extra.get("base") or imagebase,
         "functions": trimmed,
         "total_functions": len(functions),
+        "bodies": len(bodies),
     }
 
 
@@ -356,17 +382,27 @@ def _analyze_rizin(file_path: str, extra: dict, sink: LogSink, limit: int) -> di
 
 def decompile_fn(addr: int) -> dict:
     """Decompile one function from the open session. Stateless callers only
-    need the addr — the session remembers its file."""
+    need the addr — the session remembers its file.
+
+    IDA batch has no live session: bodies decompiled during analyze serve
+    straight from cache. Anything not in cache was outside the top-N batch —
+    re-analyze won't help (same top-N); it needs the rizin engine instead.
+    """
     if not isinstance(addr, int) or addr <= 0:
         return {"error": f"Invalid address: {addr}", "code": "BAD_ARGS"}
     with CURRENT["lock"]:
         session = CURRENT["session"]
         source = CURRENT["source"]
-        if session is None or source is None:
+        engine = CURRENT["engine"]
+        if source is None:
             return {"error": "No analysis session open. Run an analyze job first.", "code": "NO_SESSION"}
         cache = CURRENT["cache"]
         if addr in cache:
             return {"addr": addr, **cache[addr]}
+        if session is None:
+            if engine == "ida":
+                return {"error": "Not in the IDA batch top-N — decompile it with the rizin engine instead.", "code": "NOT_DECOMPILED"}
+            return {"error": "No analysis session open. Run an analyze job first.", "code": "NO_SESSION"}
 
     try:
         result = session.decompile(addr)
@@ -496,6 +532,122 @@ def xrefs_at(addr: int) -> dict:
     return {"addr": addr, "xrefs": xrefs}
 
 
+def callgraph_at(addr: int) -> dict:
+    """Callers + callees of the function at *addr* — rizin only.
+
+    Callers come from axtj (CALL type), callees from pdfj. Names resolve
+    through the session symbol map; unknown targets stay bare addresses.
+    IDA batch has no live rizin session — re-analyze with rizin for graphs.
+    """
+    if not isinstance(addr, int) or addr <= 0:
+        return {"error": f"Invalid address: {addr}", "code": "BAD_ARGS"}
+    file_path, _base, session, engine = _current_context()
+    if not file_path:
+        return {"error": "No analysis session open. Run an analyze job first.", "code": "NO_SESSION"}
+    if engine != "rizin-ghidra" or session is None:
+        return {"error": "call graph needs rizin (pdfj/axtj). Re-analyze with rizin provisioned.", "code": "NO_RIZIN"}
+    with CURRENT["lock"]:
+        symbols_map = dict(CURRENT["symbols"])
+    addr_name = {a: n for n, a in symbols_map.items()}
+    try:
+        callees = session.calls(addr)
+    except Exception as exc:
+        return {"error": f"callee scan failed: {exc}", "code": "CALLS_FAILED"}
+    try:
+        refs = session.xrefs(addr)
+    except Exception as exc:
+        return {"error": f"caller scan failed: {exc}", "code": "XREFS_FAILED"}
+    callers = [
+        {"from": x["from"], "name": addr_name.get(x["from"], "")}
+        for x in refs if str(x.get("type", "")).upper() == "CALL"
+    ]
+    return {
+        "addr": addr,
+        "name": addr_name.get(addr, ""),
+        "calls": [{"addr": c, "name": addr_name.get(c, "")} for c in callees],
+        "called_by": callers,
+    }
+
+
+_SEARCH_TARGETS_CAP = 25   # max string/import hits to xref (each costs a spawn)
+_SEARCH_REFS_CAP = 100     # max code references returned
+
+
+def search_callsites(query: str, cap: int = _SEARCH_REFS_CAP) -> dict:
+    """Where is `query` used? Searches import names + string contents, then
+    xrefs each hit to find the code that references it.
+
+    Returns {query, imports:[{name, lib, plt}], strings:[{addr, text}],
+    references:[{target, target_name, from, from_name, type}]}. Rizin only —
+    strings come from the file scan, imports + xrefs from one-shot spawns.
+    Bounded: at most 25 targets xref'd, refs stop at `cap`.
+    """
+    if not isinstance(query, str) or not query.strip():
+        return {"error": "Missing search query", "code": "BAD_ARGS"}
+    query = query.strip()
+    if len(query) > 128:
+        return {"error": "Query too long (max 128)", "code": "BAD_ARGS"}
+    if not isinstance(cap, int) or cap < 1 or cap > 500:
+        return {"error": "cap must be 1..500", "code": "BAD_ARGS"}
+    file_path, _base, session, engine = _current_context()
+    if not file_path:
+        return {"error": "No analysis session open. Run an analyze job first.", "code": "NO_SESSION"}
+    if engine != "rizin-ghidra" or session is None:
+        return {"error": "call-site search needs rizin (iij/axtj). Re-analyze with rizin provisioned.", "code": "NO_RIZIN"}
+
+    q = query.lower()
+    with CURRENT["lock"]:
+        symbols_map = dict(CURRENT["symbols"])
+    addr_name = {a: n for n, a in symbols_map.items()}
+
+    # 1. imports matching the query (one spawn)
+    try:
+        all_imports = session.imports()
+    except Exception as exc:
+        return {"error": f"import scan failed: {exc}", "code": "IMPORTS_FAILED"}
+    imports = [i for i in all_imports if q in i["name"].lower()][:25]
+
+    # 2. strings matching the query (pure file scan, no spawn)
+    strings_hit = strings_all(min_len=4, cap=2000)
+    if strings_hit.get("error"):
+        return {"error": strings_hit["error"], "code": strings_hit.get("code", "STRINGS_FAILED")}
+    strings = [s for s in strings_hit["strings"] if q in s["text"].lower()][:25]
+
+    # 3. xref each hit (bounded — each is a ~3s spawn)
+    targets = ([(i["plt"], i["name"]) for i in imports if i["plt"]] +
+               [(s["addr"], s["text"][:48]) for s in strings])[:_SEARCH_TARGETS_CAP]
+    references = []
+    scanned = 0
+    for target, target_name in targets:
+        if len(references) >= cap:
+            break
+        scanned += 1
+        try:
+            refs = session.xrefs(target)
+        except Exception:
+            continue
+        for x in refs:
+            if len(references) >= cap:
+                break
+            references.append({
+                "target": target,
+                "target_name": target_name,
+                "from": x["from"],
+                "from_name": addr_name.get(x["from"], ""),
+                "type": str(x.get("type", "UNKNOWN")),
+            })
+
+    return {
+        "query": query,
+        "imports": imports,
+        "imports_total": len([i for i in all_imports if q in i["name"].lower()]),
+        "strings": [{"addr": s["addr"], "text": s["text"][:128]} for s in strings],
+        "references": references,
+        "targets_scanned": scanned,
+        "truncated": len(references) >= cap,
+    }
+
+
 def symbols() -> dict:
     """Full name -> addr map for the open session.
 
@@ -508,7 +660,9 @@ def symbols() -> dict:
         session = CURRENT["session"]
         source = CURRENT["source"]
         engine = CURRENT["engine"]
-        if session is None or source is None:
+        if source is None:
+            return {"error": "No analysis session open. Run an analyze job first.", "code": "NO_SESSION"}
+        if session is None and engine != "ida":
             return {"error": "No analysis session open. Run an analyze job first.", "code": "NO_SESSION"}
         symbols_map = dict(CURRENT["symbols"])
     if not symbols_map and engine == "rizin-ghidra":
@@ -615,46 +769,73 @@ def strings_all(min_len: int = 6, cap: int = 2000) -> dict:
     return {"count": len(rows), "min_len": min_len, "strings": rows}
 
 
-def export_functions(sink: LogSink, limit: int = _EXPORT_FN_CAP) -> dict:
-    """Batch-decompile the top *limit* functions to .c files on disk."""
+def export_functions(sink: LogSink, limit: int = _EXPORT_FN_CAP, format: str = "split") -> dict:
+    """Batch-decompile the top *limit* functions to disk.
+
+    format 'split' (default): one .c file per function + index.json.
+    format 'single': all functions concatenated into bundle.c + index.json.
+    IDA batch has no session — exports straight from the analyze-time cache.
+    """
     with CURRENT["lock"]:
         session = CURRENT["session"]
         source = CURRENT["source"]
-        if session is None or source is None:
+        engine = CURRENT["engine"]
+        if source is None or (session is None and engine != "ida"):
             raise RuntimeError("No analysis session open")
         file_path = source.get("file", "")
         base = source.get("base")
+        ida_cached = dict(CURRENT["cache"]) if session is None else None
+        ida_functions = list(CURRENT.get("functions") or []) if session is None else None
 
     out_dir = os.path.join(
         os.path.dirname(os.path.abspath(file_path)), "decomp"
     )
     os.makedirs(out_dir, exist_ok=True)
 
-    functions = session.functions()
+    if session is None:
+        # IDA path: ranked list + bodies cached at analyze time
+        functions = ida_functions or []
+        results = {addr: body["code"] for addr, body in (ida_cached or {}).items()
+                   if body.get("code")}
+        sink.log(f"exporting {len(functions)} cached IDA functions to {out_dir}")
+    else:
+        functions = session.functions()
     ranked = sorted(
         [f for f in functions if f["name"] or f["size"] >= 8],
         key=lambda f: f["size"], reverse=True,
     )
     chosen = ranked[: max(1, min(int(limit), _EXPORT_FN_CAP))]
-    sink.log(f"exporting {len(chosen)} functions to {out_dir}")
+    fmt = str(format or "split").lower()
+    if fmt not in ("split", "single"):
+        raise ValueError(f"Unknown export format: {format!r} (split|single)")
+    sink.log(f"exporting {len(chosen)} functions to {out_dir} [{fmt}]")
 
     # One rizin spawn for the whole batch — per-fn spawns would cost
     # ~3s x N. Markers in the stream keep partial failures in place.
-    results = {}
-    addrs = [fn["addr"] for fn in chosen]
-    try:
-        results = session.batch_decompile(addrs)
-    except Exception as exc:
-        sink.log(f"batch decompile failed: {exc} — falling back per function", "warn")
-        for fn in chosen:
-            if sink.cancelled():
-                raise _Cancelled("export cancelled")
-            try:
-                result = session.decompile(fn["addr"])
-            except Exception:
-                continue
-            if result.get("code"):
-                results[fn["addr"]] = result["code"]
+    # (IDA path already filled `results` from the analyze-time cache.)
+    if session is not None:
+        results = {}
+        addrs = [fn["addr"] for fn in chosen]
+        try:
+            results = session.batch_decompile(addrs)
+        except Exception as exc:
+            sink.log(f"batch decompile failed: {exc} — falling back per function", "warn")
+            for fn in chosen:
+                if sink.cancelled():
+                    raise _Cancelled("export cancelled")
+                try:
+                    result = session.decompile(fn["addr"])
+                except Exception:
+                    continue
+                if result.get("code"):
+                    results[fn["addr"]] = result["code"]
+
+    def _display_name(fn) -> str:
+        addr = fn["addr"]
+        name = fn["name"]
+        if not name:
+            name = f"sub_{addr - base:#x}" if base else f"sub_{addr:#x}"
+        return _slug(name)
 
     written = []
     total = len(chosen)
@@ -665,23 +846,52 @@ def export_functions(sink: LogSink, limit: int = _EXPORT_FN_CAP) -> dict:
         code = results.get(addr)
         if not code:
             continue
-        name = fn["name"]
-        if not name:
-            name = f"sub_{addr - base:#x}" if base else f"sub_{addr:#x}"
-        name = _slug(name)
-        path = os.path.join(out_dir, f"{index + 1:04d}_{name}.c")
-        with open(path, "w", encoding="utf-8", errors="replace") as f:
-            f.write(f"// {fn['name'] or '(anonymous)'} @ {addr:#x} "
-                    f"size {fn['size']}\n")
-            f.write(code)
-            f.write("\n")
-        written.append({"addr": addr, "name": name, "path": path})
+        name = _display_name(fn)
+        header = (f"// {fn['name'] or '(anonymous)'} @ {addr:#x} "
+                  f"size {fn['size']}\n")
+        if fmt == "split":
+            path = os.path.join(out_dir, f"{index + 1:04d}_{name}.c")
+            with open(path, "w", encoding="utf-8", errors="replace") as f:
+                f.write(header)
+                f.write(code)
+                f.write("\n")
+            written.append({"addr": addr, "name": name, "path": path})
+        else:
+            written.append({"addr": addr, "name": name, "code": header + code})
         with CURRENT["lock"]:
             CURRENT["cache"][addr] = {"code": code, "name": fn["name"]}
         sink.progress("Decompiling", 50 + int(50 * (index + 1) / total))
 
+    files_out = written
+    bundle_path = ""
+    if fmt == "single" and written:
+        bundle_path = os.path.join(out_dir, "bundle.c")
+        with open(bundle_path, "w", encoding="utf-8", errors="replace") as f:
+            f.write(f"// BIFROST bundle — {len(written)} functions\n")
+            for w in written:
+                f.write(f"\n// ==== {w['name']} @ {w['addr']:#x} ====\n")
+                f.write(w.pop("code"))
+                f.write("\n")
+                w["path"] = bundle_path
+        files_out = written
+
+    # index.json in both modes: addr/name/size/path for tooling
+    import json as _json2
+
+    index = [
+        {"addr": w["addr"], "name": w["name"],
+         "size": next((fn["size"] for fn in chosen if fn["addr"] == w["addr"]), 0),
+         "path": w["path"]}
+        for w in files_out
+    ]
+    index_path = os.path.join(out_dir, "index.json")
+    with open(index_path, "w", encoding="utf-8") as f:
+        _json2.dump({"count": len(index), "format": fmt, "functions": index}, f, indent=1)
+
     sink.progress("Done", 100)
-    return {"count": len(written), "dir": out_dir, "files": written}
+    return {"count": len(files_out), "dir": out_dir, "files": files_out,
+            "format": fmt, "index": index_path,
+            **({"bundle": bundle_path} if bundle_path else {})}
 
 
 def _slug(name: str) -> str:

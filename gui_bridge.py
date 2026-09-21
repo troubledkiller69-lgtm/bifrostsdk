@@ -1345,6 +1345,33 @@ def run_xrefs_at(args):
         emit({"type": "result", "data": {"error": str(e), "code": "XREFS_FAILED"}})
 
 
+def run_callgraph_at(args):
+    """Callers + callees of the function at an address (rizin pdfj/axtj)."""
+    try:
+        from core.decomp.analyzer import callgraph_at
+        addr = args.get("addr", 0)
+        if not isinstance(addr, int) or addr <= 0:
+            emit({"type": "result", "data": {"error": f"Invalid address: {addr}", "code": "BAD_ARGS"}})
+            return
+        emit({"type": "result", "data": callgraph_at(addr=addr)})
+    except Exception as e:
+        emit({"type": "result", "data": {"error": str(e), "code": "CALLGRAPH_FAILED"}})
+
+
+def run_search_callsites(args):
+    """Import/string search + xrefs per hit (rizin iij/axtj + file scan)."""
+    try:
+        from core.decomp.analyzer import search_callsites
+        query = args.get("query", "")
+        cap = args.get("cap", 100)
+        kwargs = {"query": query}
+        if isinstance(cap, int) and not isinstance(cap, bool):
+            kwargs["cap"] = cap
+        emit({"type": "result", "data": search_callsites(**kwargs)})
+    except Exception as e:
+        emit({"type": "result", "data": {"error": str(e), "code": "SEARCH_FAILED"}})
+
+
 def run_symbols(args):
     """Full function name -> addr map for the open session."""
     try:
@@ -1397,6 +1424,44 @@ def _output_dir_listing(target_name: str) -> list[dict]:
         return entries[:30]
     except Exception:
         return []
+
+
+def _scm_service_running(service_name: str) -> bool | None:
+    """True if the SCM reports the service running, False if stopped/missing,
+    None when the query itself is unavailable (non-Windows / no rights)."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+        advapi = ctypes.WinDLL("advapi32", use_last_error=True)
+        SC_MANAGER_CONNECT = 0x0001
+        SERVICE_QUERY_STATUS = 0x0004
+        SERVICE_RUNNING = 0x00000004
+        hSCM = advapi.OpenSCManagerW(None, None, SC_MANAGER_CONNECT)
+        if not hSCM:
+            return None
+        try:
+            hSvc = advapi.OpenServiceW(hSCM, service_name, SERVICE_QUERY_STATUS)
+            if not hSvc:
+                return False  # no such service = definitely not loaded
+            try:
+                class SERVICE_STATUS(ctypes.Structure):
+                    _fields_ = [("dwServiceType", wintypes.DWORD),
+                                ("dwCurrentState", wintypes.DWORD),
+                                ("dwControlsAccepted", wintypes.DWORD),
+                                ("dwWin32ExitCode", wintypes.DWORD),
+                                ("dwServiceSpecificExitCode", wintypes.DWORD),
+                                ("dwCheckPoint", wintypes.DWORD),
+                                ("dwWaitHint", wintypes.DWORD)]
+                st = SERVICE_STATUS()
+                if not advapi.QueryServiceStatus(hSvc, ctypes.byref(st)):
+                    return None
+                return st.dwCurrentState == SERVICE_RUNNING
+            finally:
+                advapi.CloseServiceHandle(hSvc)
+        finally:
+            advapi.CloseServiceHandle(hSCM)
+    except Exception:
+        return None
 
 
 def run_driver_list(args):
@@ -1453,7 +1518,9 @@ def run_driver_list(args):
             elif not present:
                 hash_ok = False if prof.known_hashes else None
             meta = getattr(prof, "_byo_meta", {}) or {}
+            loaded = _scm_service_running(prof.service_name)
             drivers.append({
+                "loaded": loaded,
                 "key": key,
                 "filename": prof.filename,
                 "service_name": prof.service_name,
@@ -1642,11 +1709,15 @@ def run_analyze_export(args):
     if not isinstance(limit, int) or limit <= 0 or limit > 2000:
         emit({"type": "result", "data": {"error": "Invalid limit (1..2000)", "code": "BAD_ARGS"}})
         return
-    _op_begin("analyze_export", {"limit": limit})
+    fmt = str(args.get("format") or "split").lower()
+    if fmt not in ("split", "single"):
+        emit({"type": "result", "data": {"error": "Invalid format (split|single)", "code": "BAD_ARGS"}})
+        return
+    _op_begin("analyze_export", {"limit": limit, "format": fmt})
     try:
-        _log("Analyzer: export pass started")
+        _log(f"Analyzer: export pass started [{fmt}]")
         sink = _decomp_sink()
-        result = export_functions(sink, limit=limit)
+        result = export_functions(sink, limit=limit, format=fmt)
         _log(f"Export complete — {result['count']} files in {result['dir']}")
         emit({"type": "result", "data": result})
         _op_end("ok", f"export complete ({result['count']} files)")

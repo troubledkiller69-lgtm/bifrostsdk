@@ -31,17 +31,20 @@ const ALLOWED_COMMANDS = [
   'list_processes',
   'test_webhook', 'read_memory', 'write_memory', 'ac_detect',
   'analyze_probe', 'decompile_fn',
-  'analyzer_hexdump', 'analyzer_disasm_at', 'analyzer_xrefs',
+  'analyzer_hexdump', 'analyzer_disasm_at', 'analyzer_xrefs', 'analyzer_callgraph', 'analyzer_search',
   'analyzer_symbols', 'analyzer_strings',
   'debug_snapshot',
   'driver_list', 'driver_test',
 ];
 
-// Request-response timeout per command. decompile_fn and analyzer_xrefs run
-// rizin one-shots (aaa + work) — big modules blow past the default 15s.
+// Request-response timeout per command. decompile_fn, analyzer_xrefs and
+// analyzer_callgraph run rizin one-shots (aaa + work) — big modules blow
+// past the default 15s. callgraph runs two (pdfj + axtj).
 const COMMAND_TIMEOUTS = {
   decompile_fn: 120000,
   analyzer_xrefs: 120000,
+  analyzer_callgraph: 180000,
+  analyzer_search: 300000,
   analyzer_disasm_at: 30000,
 };
 const DEFAULT_COMMAND_TIMEOUT = 15000;

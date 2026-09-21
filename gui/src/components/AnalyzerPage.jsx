@@ -72,6 +72,7 @@ export default function AnalyzerPage() {
   const [result, setResult] = useState(null);
   const [exportInfo, setExportInfo] = useState(null);
   const [exportLimit, setExportLimit] = useState(500);
+  const [exportFormat, setExportFormat] = useState('split'); // split | single
   const [filter, setFilter] = useState('');
   const [activeAddr, setActiveAddr] = useState(null);
   const [decompiling, setDecompiling] = useState(false);
@@ -85,6 +86,10 @@ export default function AnalyzerPage() {
   const [stringFilter, setStringFilter] = useState('');
   const [explorerTarget, setExplorerTarget] = useState(null); // {addr, ts}
   const [engineChoice, setEngineChoice] = useState('auto'); // auto | rizin | ida | iced
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searching, setSearching] = useState(false);
+  const [searchResult, setSearchResult] = useState(null);
+  const [searchError, setSearchError] = useState('');
 
   const consoleEndRef = useRef(null);
   const api = window.bifrost;
@@ -286,8 +291,8 @@ export default function AnalyzerPage() {
     setExportInfo(null);
     setProgress({ stage: 'Exporting', pct: 0 });
     setRunning('analyze_export');
-    addLog(`Exporting top ${lim} functions...`);
-    api.startAnalyzeExport({ limit: lim });
+    addLog(`Exporting top ${lim} functions [${exportFormat}]...`);
+    api.startAnalyzeExport({ limit: lim, format: exportFormat });
   };
 
   const doDecompile = async (addr, name) => {
@@ -295,7 +300,10 @@ export default function AnalyzerPage() {
     setActiveAddr(addr);
     setDecompTarget({ addr, name: name || null });
     setCodeError('');
-    if (!result?.session) {
+    // IDA batch has no live session but serves top-N bodies from cache —
+    // the backend answers those and returns NOT_DECOMPILED for the rest.
+    // Only iced-x86 is truly body-less.
+    if (!result || result.engine === 'iced-x86') {
       setDecompiled(null);
       setCodeError('No decompiler session open — this binary was analyzed with the iced-x86 fallback. Run tools/provision_rizin.ps1 once and re-analyze for C output.');
       return;
@@ -318,6 +326,26 @@ export default function AnalyzerPage() {
 
   const handleRowClick = (fn) => {
     doDecompile(fn.addr, fn.name);
+  };
+
+  const handleSearch = async () => {
+    const q = searchQuery.trim();
+    if (!api || searching || !q) return;
+    setSearching(true);
+    setSearchError('');
+    setSearchResult(null);
+    try {
+      const r = await api.analyzerSearch(q, 100);
+      const payload = unwrapPayload(r) || {};
+      if (payload.error) {
+        setSearchError(payload.code ? `${payload.code}: ${payload.error}` : payload.error);
+      } else {
+        setSearchResult(payload);
+      }
+    } catch (e) {
+      setSearchError(e?.message || String(e));
+    }
+    setSearching(false);
   };
 
   // Identifier (or hex-constant) link inside a decompiled body.
@@ -502,18 +530,22 @@ export default function AnalyzerPage() {
               <input
                 type="number"
                 className="input-field"
-                style={{ width: 110 }}
+                style={{ width: 90 }}
                 min="1"
                 max="2000"
                 value={exportLimit}
                 onChange={(e) => setExportLimit(e.target.value)}
               />
+              <select className="input-field" style={{ flex: 1, fontSize: 12 }} value={exportFormat} onChange={(e) => setExportFormat(e.target.value)} title="split = one .c per function; single = bundle.c">
+                <option value="split">split .c files</option>
+                <option value="single">single bundle.c</option>
+              </select>
               <button
                 className="btn btn-secondary"
                 onClick={handleExport}
-                disabled={!!running || decompiling || !result?.session}
+                disabled={!!running || decompiling || !result || result.engine === 'iced-x86'}
                 style={{ flex: 1 }}
-                title={!result?.session ? 'Analyze a binary with rizin provisioned first' : 'Batch-decompile the largest functions to .c files'}
+                title={!result || result.engine === 'iced-x86' ? 'Analyze a binary with rizin or IDA first' : 'Batch-decompile the largest functions (+ index.json)'}
               >
                 {running === 'analyze_export' ? 'EXPORTING...' : 'EXPORT'}
               </button>
@@ -614,7 +646,8 @@ export default function AnalyzerPage() {
           {exportInfo && (
             <div className="page-config-card" style={{ padding: 14 }}>
               <div className="page-config-title" style={{ marginBottom: 8 }}>
-                Export — {exportInfo.count} files in {exportInfo.dir}
+                Export — {exportInfo.count} {exportInfo.format === 'single' ? 'functions → bundle.c' : 'files'} in {exportInfo.dir}
+                {exportInfo.index && <span style={{ display: 'block', fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 2 }}>index.json written</span>}
               </div>
               <div className="log-console" style={{ maxHeight: 180 }}>
                 {(exportInfo.files || []).map((f, i) => (
@@ -707,9 +740,52 @@ export default function AnalyzerPage() {
                 )}
               </div>
 
-              {/* RIGHT — strings + explorer stack */}
+              {/* RIGHT — search + strings + explorer stack */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12, minWidth: 0 }}>
-                {result?.session ? (
+                {result?.engine === 'rizin-ghidra' && (
+                  <div className="page-config-card" style={{ padding: 10 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                      <span className="page-config-title" style={{ marginBottom: 0, fontSize: 11, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Call-site search</span>
+                      <div style={{ flex: 1 }} />
+                      {searchResult && !searching && <span style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>{(searchResult.references || []).length} refs</span>}
+                    </div>
+                    <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+                      <input type="text" className="input-field" style={{ flex: 1, padding: '6px 8px', fontSize: 11 }} placeholder="CreateFileW, password, recv…" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') handleSearch(); }} />
+                      <button className="btn btn-secondary" style={{ padding: '4px 12px', fontSize: 10 }} onClick={handleSearch} disabled={searching || !searchQuery.trim()}>{searching ? 'SEARCHING…' : 'SEARCH'}</button>
+                    </div>
+                    {searchError ? (<div className="log-line error" style={{ fontSize: 11 }}>{searchError}</div>) : searching ? (
+                      <div className="log-line dim" style={{ fontSize: 11 }}>Matching imports + strings, xrefs per hit (~3s each, max 25)…</div>
+                    ) : searchResult ? (
+                      <div className="log-console" style={{ maxHeight: 260, overflow: 'auto', padding: 0 }}>
+                        {(searchResult.imports || []).length > 0 && <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text-muted)', padding: '6px 8px 2px' }}>Imports{(searchResult.imports_total || 0) > (searchResult.imports || []).length ? ` (${searchResult.imports_total} matched)` : ''}</div>}
+                        {(searchResult.imports || []).map((im, i) => (
+                          <div key={`im-${i}`} className="hex-row" style={{ cursor: im.plt ? 'pointer' : 'default', padding: '4px 8px' }} title={im.plt ? 'Open PLT in explorer' : im.lib} onClick={() => im.plt && setExplorerTarget({ addr: im.plt, ts: Date.now() })}>
+                            <span style={{ color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)', fontSize: 10, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{im.name}</span>
+                            <span style={{ color: 'var(--text-ghost)', fontFamily: 'var(--font-mono)', fontSize: 9, padding: '0 6px' }}>{im.lib}</span>
+                            {im.plt ? <span style={{ color: 'var(--accent)', fontFamily: 'var(--font-mono)', fontSize: 10 }}>{fmtAddr(im.plt)}</span> : null}
+                          </div>
+                        ))}
+                        {(searchResult.strings || []).length > 0 && <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text-muted)', padding: '6px 8px 2px' }}>Strings</div>}
+                        {(searchResult.strings || []).slice(0, 10).map((s, i) => (
+                          <div key={`ss-${i}`} className="hex-row" style={{ cursor: 'pointer', padding: '4px 8px' }} title="Open in explorer" onClick={() => setExplorerTarget({ addr: s.addr, ts: Date.now() })}>
+                            <span style={{ color: 'var(--accent)', fontFamily: 'var(--font-mono)', fontSize: 10 }}>{fmtAddr(s.addr)}</span>
+                            <span style={{ color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)', fontSize: 10, padding: '0 6px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.text}</span>
+                          </div>
+                        ))}
+                        <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text-muted)', padding: '6px 8px 2px' }}>Code refs{searchResult.truncated ? ' (capped)' : ''}</div>
+                        {(searchResult.references || []).length === 0 && <div className="log-line dim" style={{ padding: '4px 8px', fontSize: 11 }}>No code references — {searchResult.targets_scanned} target(s) scanned.</div>}
+                        {(searchResult.references || []).slice(0, 60).map((rf, i) => (
+                          <div key={`rf-${i}`} className="hex-row" style={{ cursor: 'pointer', padding: '4px 8px' }} title={`${rf.target_name} referenced here`} onClick={() => setExplorerTarget({ addr: rf.from, ts: Date.now() })}>
+                            <span style={{ color: 'var(--accent)', fontFamily: 'var(--font-mono)', fontSize: 10 }}>{fmtAddr(rf.from)}</span>
+                            <span style={{ color: 'var(--warn)', fontFamily: 'var(--font-mono)', fontSize: 9, padding: '0 6px' }}>{rf.type}</span>
+                            <span style={{ color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: 10, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{rf.from_name ? `${rf.from_name} ← ` : ''}{rf.target_name}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (<div className="log-line dim" style={{ fontSize: 11 }}>Imports + strings → xrefs. Click any hit to open in explorer.</div>)}
+                  </div>
+                )}
+                {result ? (
                   <div className="page-config-card" style={{ padding: 10 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                       <span className="page-config-title" style={{ marginBottom: 0, fontSize: 11, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Strings</span>
@@ -727,7 +803,7 @@ export default function AnalyzerPage() {
                     )}
                   </div>
                 ) : (
-                  <div className="page-config-card" style={{ padding: 12 }}><div className="log-line dim" style={{ fontSize: 11 }}>{result ? 'Session closed — strings need an open session (rizin/ida).' : 'Run Analyze to unlock strings + explorer.'}</div></div>
+                  <div className="page-config-card" style={{ padding: 12 }}><div className="log-line dim" style={{ fontSize: 11 }}>Run Analyze to unlock strings + explorer.</div></div>
                 )}
                 <AddressExplorer api={api} enabled={!!result} sessionOpen={!!result?.session} jumpTarget={explorerTarget} />
               </div>

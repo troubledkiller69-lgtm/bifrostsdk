@@ -14,7 +14,7 @@ from gui_bridge import (
     KNOWN_GAME_EXES, list_processes, run_dump, run_generate, run_read_memory, run_write_memory, run_ac_detect,
     run_test_webhook, cancel_operation,
     run_analyze_probe, run_analyze, run_decompile_fn, run_analyze_export,
-    run_hexdump_at, run_disasm_at, run_xrefs_at, run_symbols, run_strings,
+    run_hexdump_at, run_disasm_at, run_xrefs_at, run_callgraph_at, run_search_callsites, run_symbols, run_strings,
     run_debug_snapshot, run_driver_list, run_driver_test,
 )
 from gui_bridge import _op_begin, _op_end, _op_result_error
@@ -196,6 +196,12 @@ def process_command(cmd_line):
             response = _pick_result(captured)
         elif command == 'analyzer_xrefs':
             run_xrefs_at(args)
+            response = _pick_result(captured)
+        elif command == 'analyzer_callgraph':
+            run_callgraph_at(args)
+            response = _pick_result(captured)
+        elif command == 'analyzer_search':
+            run_search_callsites(args)
             response = _pick_result(captured)
         elif command == 'analyzer_symbols':
             run_symbols(args)

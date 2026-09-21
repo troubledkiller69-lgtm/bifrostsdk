@@ -1,0 +1,13 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "bifrost": {
+      "type": "local",
+      "command": [
+        "C:\\Users\\howar\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe",
+        "C:\\Users\\howar\\.gemini\\antigravity\\scratch\\bifrostsdk\\mcp_server.py"
+      ],
+      "enabled": true
+    }
+  }
+}

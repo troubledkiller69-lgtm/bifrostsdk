@@ -7,7 +7,17 @@ const accessTone = (acc) => {
   return 'bad';
 };
 
-export default function DumpPage({ engine, process, progress, logs, onStart, onStop, dumpOptions, setDumpOptions, accessInfo, lastDump, onRedump, stealth, driverKey, setDriverKey }) {
+export default function DumpPage({ engine, process, progress, logs, onStart, onStop, dumpOptions, setDumpOptions, accessInfo, lastDump, onRedump, stealth, driverKey, setDriverKey, dumpQueue, setDumpQueue, queueRunning, onRunQueue }) {
+  const queueTarget = () => {
+    if (!engine || !process || !setDumpQueue) return;
+    const entry = { engine, pid: process.pid, name: process.name };
+    if ((dumpQueue || []).some(q => q.engine === entry.engine && q.pid === entry.pid)) {
+      window.bifrost?.toast && window.bifrost.toast('Already queued', 'info');
+      return;
+    }
+    setDumpQueue([...(dumpQueue || []), entry]);
+    window.bifrost?.toast && window.bifrost.toast(`Queued ${entry.name} (PID ${entry.pid})`, 'success');
+  };
   const [driverOptions, setDriverOptions] = React.useState(null);
   React.useEffect(() => {
     if ((stealth === 'driver' || stealth === 'cr3') && window.bifrost?.command) {
@@ -206,7 +216,41 @@ export default function DumpPage({ engine, process, progress, logs, onStart, onS
             Cancel
           </button>
         )}
+        {!progress.running && engine && process && (
+          <button
+            className="btn"
+            onClick={queueTarget}
+            title="Add this engine+process to the batch queue — runs after the current dump finishes"
+          >
+            Queue Target{(dumpQueue?.length || 0) > 0 ? ` (${dumpQueue.length})` : ''}
+          </button>
+        )}
       </div>
+
+      {(dumpQueue?.length || 0) > 0 && (
+        <div style={{ marginTop: 12, padding: '10px 12px', borderRadius: 5, background: '#0a0a0c', border: '1px solid rgba(255,255,255,0.08)', borderTop: '1px solid rgba(255,255,255,0.12)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+            <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text-secondary)', fontFamily: 'var(--font-display)' }}>Batch queue</span>
+            <span style={{ fontSize: 11, color: 'var(--accent)', fontFamily: 'var(--font-mono)' }}>{dumpQueue.length} queued{queueRunning ? ' · running' : ''}</span>
+            <span style={{ flex: 1 }} />
+            {!queueRunning && (
+              <button className="btn btn-primary" style={{ fontSize: 11, padding: '4px 12px' }} onClick={onRunQueue} title="Dump the first queued entry, then chain the rest">Run Queue</button>
+            )}
+            <button className="btn" style={{ fontSize: 11, padding: '4px 12px' }} onClick={() => setDumpQueue([])}>Clear</button>
+          </div>
+          {(dumpQueue || []).map((q, i) => (
+            <div key={`${q.engine}-${q.pid}-${i}`} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', borderTop: i ? '1px solid rgba(255,255,255,0.05)' : 'none', fontFamily: 'var(--font-mono)', fontSize: 11 }}>
+              <span style={{ color: 'var(--text-ghost)' }}>{i + 1}.</span>
+              <span style={{ color: 'var(--text-primary)' }}>{q.engine}</span>
+              <span style={{ color: 'var(--text-muted)' }}>→</span>
+              <span style={{ color: 'var(--text-primary)' }}>{q.name}</span>
+              <span style={{ color: 'var(--text-ghost)' }}>PID {q.pid}</span>
+              <span style={{ flex: 1 }} />
+              <button className="btn" style={{ fontSize: 10, padding: '2px 8px' }} onClick={() => setDumpQueue(dumpQueue.filter((_, j) => j !== i))}>Remove</button>
+            </div>
+          ))}
+        </div>
+      )}
 
       {!engine && !process && (
         <div className="empty-state" style={{ marginTop: 16 }}>

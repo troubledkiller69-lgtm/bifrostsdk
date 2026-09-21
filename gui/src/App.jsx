@@ -103,6 +103,9 @@ export default function App() {
   const [dumpOptions, setDumpOptions] = useState({ forceDiscovery: true, regenerate: false });
   const [accessInfo, setAccessInfo] = useState(null);
   const [lastDump, setLastDump] = useState(() => loadSession('lastDump', null));
+  const [dumpQueue, setDumpQueue] = useState(() => loadSession('dumpQueue', []));
+  const dumpQueueRef = useRef([]);
+  useEffect(() => { dumpQueueRef.current = dumpQueue; saveSession('dumpQueue', dumpQueue); }, [dumpQueue]);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [toasts, setToasts] = useState([]);
   const [confirm, setConfirm] = useState({ open: false, title: '', body: '', confirmLabel: 'Confirm', onConfirm: null });
@@ -207,6 +210,18 @@ export default function App() {
   // lastDumpEventRef feeds the stall watchdog effect below.
   const lastDumpEventRef = useRef(Date.now());
   const stallWarnedRef = useRef(false);
+  // Batch queue: runDumpTargetRef lets the dump-complete listener advance
+  // the queue without re-subscribing (effect deps stay [api, addLog]).
+  const runDumpTargetRef = useRef(null);
+  const advanceQueue = useCallback((ok) => {
+    const next = dumpQueueRef.current;
+    if (!next || next.length === 0) return false;
+    const [head, ...rest] = next;
+    setDumpQueue(rest);
+    addLog(`[QUEUE] ${ok ? 'next' : 'skipping ahead after error'}: ${head.engine} → ${head.name} (PID ${head.pid}) — ${rest.length} left`, ok ? 'info' : 'warn');
+    if (runDumpTargetRef.current) runDumpTargetRef.current(head);
+    return true;
+  }, [addLog]);
   useEffect(() => {
     if (!api) return;
 
@@ -249,14 +264,16 @@ export default function App() {
         } else {
           addLog(`[ERROR] ${msg.data.error}`, 'error');
         }
+        advanceQueue(false);
         return;
       }
       setDumpResults(msg.data);
       addLog('Dump complete', 'success');
-
-      const settings = loadSession('settings', { autoNavigate: true });
-      if (settings.autoNavigate !== false) {
-        setPage('results');
+      if (!advanceQueue(true)) {
+        const settings = loadSession('settings', { autoNavigate: true });
+        if (settings.autoNavigate !== false) {
+          setPage('results');
+        }
       }
     });
     unsubs.push(unsubComplete);
@@ -291,7 +308,8 @@ export default function App() {
       dumpArgs.driver = driverKey;
     }
     api.startDump(dumpArgs);
-  }, [api, stealth, dumpOptions]);
+  }, [api, stealth, dumpOptions, driverKey]);
+  useEffect(() => { runDumpTargetRef.current = runDumpTarget; }, [runDumpTarget]);
 
   const startDump = useCallback(() => {
     if (!selectedEngine || !selectedProcess) return;
@@ -309,10 +327,22 @@ export default function App() {
 
   useEffect(() => { saveSession('lastDump', lastDump); }, [lastDump]);
 
+  const runQueueHead = useCallback(() => {
+    const q = dumpQueueRef.current;
+    if (!q || q.length === 0 || !runDumpTargetRef.current) return;
+    const [head, ...rest] = q;
+    setDumpQueue(rest);
+    setLastDump(head);
+    runDumpTargetRef.current(head);
+  }, []);
   const stopDump = useCallback(() => {
     if (!api) return;
     api.stopDump();
     setDumpProgress(p => ({ ...p, running: false }));
+    if (dumpQueueRef.current.length > 0) {
+      addLog(`[QUEUE] cleared ${dumpQueueRef.current.length} queued target(s)`, 'warn');
+      setDumpQueue([]);
+    }
     addLog('Cancellation requested — dump will stop at the next checkpoint', 'warn');
   }, [api, addLog]);
 
@@ -417,6 +447,10 @@ export default function App() {
             stealth={stealth}
             driverKey={driverKey}
             setDriverKey={setDriverKey}
+            dumpQueue={dumpQueue}
+            setDumpQueue={setDumpQueue}
+            queueRunning={dumpProgress.running}
+            onRunQueue={runQueueHead}
           />
         );
       case 'results':

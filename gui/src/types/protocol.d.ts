@@ -57,6 +57,8 @@ export interface WindowBifrost {
   analyzerHexdump: (addr: number, size?: number) => Promise<BridgeResult<unknown>>;
   analyzerDisasmAt: (addr: number, size?: number) => Promise<BridgeResult<unknown>>;
   analyzerXrefs: (addr: number) => Promise<BridgeResult<unknown>>;
+  analyzerCallgraph: (addr: number) => Promise<BridgeResult<unknown>>;
+  analyzerSearch: (query: string, cap?: number) => Promise<BridgeResult<unknown>>;
   analyzerSymbols: () => Promise<BridgeResult<unknown>>;
   analyzerStrings: (minLen?: number, cap?: number) => Promise<BridgeResult<unknown>>;
   debugSnapshot: (includeThreads?: boolean) => Promise<BridgeResult<unknown>>;

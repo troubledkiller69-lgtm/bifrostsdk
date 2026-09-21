@@ -61,6 +61,8 @@ contextBridge.exposeInMainWorld('bifrost', {
   analyzerHexdump: (addr, size) => ipcRenderer.invoke('python-command', { command: 'analyzer_hexdump', args: { addr, size } }),
   analyzerDisasmAt: (addr, size) => ipcRenderer.invoke('python-command', { command: 'analyzer_disasm_at', args: { addr, size } }),
   analyzerXrefs: (addr) => ipcRenderer.invoke('python-command', { command: 'analyzer_xrefs', args: { addr } }),
+  analyzerCallgraph: (addr) => ipcRenderer.invoke('python-command', { command: 'analyzer_callgraph', args: { addr } }),
+  analyzerSearch: (query, cap) => ipcRenderer.invoke('python-command', { command: 'analyzer_search', args: { query, cap } }),
   analyzerSymbols: () => ipcRenderer.invoke('python-command', { command: 'analyzer_symbols', args: {} }),
   analyzerStrings: (minLen, cap) => ipcRenderer.invoke('python-command', { command: 'analyzer_strings', args: { min_len: minLen, cap } }),
   debugSnapshot: (includeThreads) => ipcRenderer.invoke('python-command', { command: 'debug_snapshot', args: { include_threads: !!includeThreads } }),

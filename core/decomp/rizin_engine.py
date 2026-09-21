@@ -143,6 +143,57 @@ def parse_pdgj(payload) -> dict:
     return {"code": ""}
 
 
+def parse_pdfj_calls(payload) -> list[int]:
+    """Callee targets from a `pdfj @ addr` payload: ops with type CALL (or
+    UCALL) and a numeric `jump` target. Import thunks (jump 0 / missing)
+    are dropped. Never raises."""
+    if not payload:
+        return []
+    try:
+        data = json.loads(payload) if isinstance(payload, str) else payload
+    except (ValueError, TypeError):
+        return []
+    ops = data.get("ops") if isinstance(data, dict) else data
+    if not isinstance(ops, list):
+        return []
+    out = []
+    for op in ops:
+        if not isinstance(op, dict):
+            continue
+        if str(op.get("type") or "").upper() not in ("CALL", "UCALL", "RCALL"):
+            continue
+        target = op.get("jump")
+        if isinstance(target, int) and target > 0 and target not in out:
+            out.append(target)
+    return sorted(out)
+
+
+def parse_iij(payload) -> list[dict]:
+    """Normalize an `iij` payload into [{name, lib, plt}, ...]. Never raises."""
+    if not payload:
+        return []
+    try:
+        entries = json.loads(payload) if isinstance(payload, str) else payload
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(entries, list):
+        return []
+    out = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        name = str(entry.get("name") or "")
+        if not name:
+            continue
+        plt = entry.get("plt", 0)
+        out.append({
+            "name": name,
+            "lib": str(entry.get("libname") or ""),
+            "plt": plt if isinstance(plt, int) and plt > 0 else 0,
+        })
+    return out
+
+
 def parse_axtj(payload) -> list[dict]:
     """Normalize an `axtj @ addr` payload into [{from, type, op}, ...].
 
@@ -420,6 +471,25 @@ class RizinSession:
             p for p in (self._prelude(), f"aaa; axtj @ {addr:#x}") if p
         )
         return parse_axtj(self._spawn(chain))
+
+    def imports(self) -> list[dict]:
+        """Import table (iij): [{name, lib, plt}]. Empty list = none."""
+        if self._runner is not None:
+            return parse_iij(self.run("iij"))
+        chain = "; ".join(
+            p for p in (self._prelude(), "aaa; iij") if p
+        )
+        return parse_iij(self._spawn(chain))
+
+    def calls(self, addr: int) -> list[int]:
+        """Callee addresses called from the function containing *addr*
+        (pdfj, one spawn). Empty list = none or not a function."""
+        if self._runner is not None:
+            return parse_pdfj_calls(self.run(f"pdfj @ {addr:#x}"))
+        chain = "; ".join(
+            p for p in (self._prelude(), f"aaa; pdfj @ {addr:#x}") if p
+        )
+        return parse_pdfj_calls(self._spawn(chain))
 
     def batch_decompile(self, addrs: list[int]) -> dict[int, str]:
         """Decompile many functions with as few spawns as possible.

@@ -277,6 +277,7 @@ class TestAnalyzer:
     def test_auto_falls_back_when_rizin_missing(self, tmp_path, monkeypatch):
         monkeypatch.setattr(analyzer, "rizin_binary", lambda: None)
         monkeypatch.setattr(rizin_engine, "rizin_binary", lambda: None)
+        monkeypatch.setattr(analyzer, "find_ida_exe", lambda: None)
         sink = CollectingSink()
         result = analyzer.analyze(
             {"type": "file", "path": self._file(tmp_path), "engine": "auto"}, sink
@@ -312,6 +313,7 @@ class TestAnalyzer:
     def test_probe_shapes(self, monkeypatch):
         monkeypatch.setattr(analyzer, "find_rizin_dir", lambda: None)
         monkeypatch.setattr(analyzer, "rizin_binary", lambda: None)
+        monkeypatch.setattr(analyzer, "find_ida_exe", lambda: None)
         probe = analyzer.probe()
         assert probe["rizin"]["available"] is False
         assert probe["iced"]["available"] is True
