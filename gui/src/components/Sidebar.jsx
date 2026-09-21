@@ -63,13 +63,6 @@ const NAV_ITEMS = [
       <path d="M6 6V4M10 6V4M14 6V4M18 6V4M6 18v2M10 18v2M14 18v2M18 18v2" />
     </svg>
   )},
-  { key: 'acmonitor', label: 'AC Monitor', icon: (
-    <svg className="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-      <line x1="12" y1="8" x2="12" y2="12" />
-      <circle cx="12" cy="16" r="0.5" fill="currentColor" />
-    </svg>
-  )},
   { key: 'analyzer', label: 'Analyzer', icon: (
     <svg className="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
       <rect x="6" y="4" width="4" height="6" rx="1" />

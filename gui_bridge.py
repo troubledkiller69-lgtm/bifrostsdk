@@ -1161,7 +1161,6 @@ def run_ac_detect(args):
     """Detect running anti-cheat systems (processes, services, drivers).
 
     Returns data keyed by AC id: {running, driver_loaded, service_status}.
-    Matches the shape ACMonitorPage.jsx expects.
     """
     try:
         import psutil

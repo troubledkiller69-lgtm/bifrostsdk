@@ -44,7 +44,7 @@ import DumpPage from './components/DumpPage';
 import ResultsPage from './components/ResultsPage';
 import DiffPage from './components/DiffPage';
 import MemoryViewerPage from './components/MemoryViewerPage';
-import ACMonitorPage from './components/ACMonitorPage';
+
 import AnalyzerPage from './components/AnalyzerPage';
 import DiagnosticsPage from './components/DiagnosticsPage';
 import DriverBayPage from './components/DriverBayPage';
@@ -440,7 +440,7 @@ export default function App() {
         return;
       }
       if (e.ctrlKey && !e.shiftKey && !e.altKey) {
-        const pages = ['dashboard', 'engines', 'processes', 'dump', 'results', 'diff', 'memory', 'acmonitor', 'analyzer', 'diag', 'driverbay', 'config', 'settings'];
+        const pages = ['dashboard', 'engines', 'processes', 'dump', 'results', 'diff', 'memory', 'analyzer', 'diag', 'driverbay', 'config', 'settings'];
         const num = parseInt(e.key);
         if (num >= 1 && num <= pages.length) {
           e.preventDefault();
@@ -519,8 +519,6 @@ export default function App() {
         return <DiffPage />;
       case 'memory':
         return <MemoryViewerPage />;
-      case 'acmonitor':
-        return <ACMonitorPage />;
       case 'analyzer':
         return <AnalyzerPage />;
       case 'diag':

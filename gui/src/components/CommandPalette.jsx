@@ -8,7 +8,7 @@ const NAV_ITEMS = [
   { id: 'results', label: 'Results', keys: ['results', 'fields', 'headers'], action: 'nav' },
   { id: 'diff', label: 'Diff Viewer', keys: ['diff', 'compare'], action: 'nav' },
   { id: 'memory', label: 'Memory Viewer', keys: ['memory', 'hex', 'read'], action: 'nav' },
-  { id: 'acmonitor', label: 'AC Monitor', keys: ['ac', 'anticheat', 'eac'], action: 'nav' },
+
   { id: 'analyzer', label: 'Analyzer', keys: ['analyzer', 'decompile', 'rizin', 'ghidra'], action: 'nav' },
   { id: 'diag', label: 'Diagnostics', keys: ['diag', 'telemetry', 'threads'], action: 'nav' },
   { id: 'driverbay', label: 'Driver Bay', keys: ['driver', 'byo', 'vulnerable', 'physmem'], action: 'nav' },
