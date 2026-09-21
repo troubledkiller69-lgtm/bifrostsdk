@@ -55,19 +55,23 @@ def ida_available() -> bool:
     return bool(exe and os.path.isfile(exe))
 
 def ida_version(exe: str | None = None) -> str:
+    """Version label without executing the binary.
+
+    `idat.exe -h` hangs waiting on stdin and flashes a console on probe,
+    so the version is parsed from the install path instead
+    (e.g. "...\\IDA Professional 9.1\\idat.exe"). "" when unknown.
+    """
     exe = exe or find_ida_exe()
     if not exe:
         return ""
     try:
-        r = subprocess.run([exe, "-h"], capture_output=True, text=True, timeout=6)
-        out = (r.stdout or "") + (r.stderr or "")
-        # first line like "IDA Professional 9.1"
-        for line in out.splitlines():
-            if "IDA" in line:
-                return line.strip()[:64]
-        return out[:64].strip()
+        parts = os.path.abspath(exe).split(os.sep)
+        for part in reversed(parts[:-1]):  # skip the binary name itself
+            if "ida" in part.lower():
+                return part.strip()[:64]
     except Exception:
-        return ""
+        pass
+    return ""
 
 # ------------------------------------------------------------------
 # One-shot dump: run IDA headless, emit functions JSON
@@ -288,7 +292,8 @@ def ida_analyze(file_path: str, timeout: int = 1500, cancel=None, log=None,
             n = 50
         env["BIFROST_IDA_DECOMP_N"] = str(n)
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                env=env)
+                                env=env,
+                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         elapsed = 0
         rc = None
         try:
