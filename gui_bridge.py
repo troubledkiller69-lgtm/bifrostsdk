@@ -1033,6 +1033,78 @@ def run_write_memory(args):
         emit({"type": "result", "data": {"error": str(e), "code": "WRITE_FAILED"}})
 
 
+def run_make_signature(args):
+    """Generate AOB signatures from known-good addresses (Memory Viewer).
+
+    args: {pid, addresses:[int] (1..16), anchor_offset?, read_size?,
+           verify? (default True — full-process match verification)}
+    Returns: {pid, addresses, candidates:[{pattern,strategy,length,
+              concrete_ratio,scan_matches,score}], verified}
+    """
+    pid = args.get("pid", 0)
+    addresses = args.get("addresses", [])
+    anchor_offset = args.get("anchor_offset", 0)
+    read_size = args.get("read_size", 0x100)
+    verify = args.get("verify", True)
+    if not isinstance(pid, int) or pid <= 0 or pid > 0xFFFFFFFF:
+        emit({"type": "result", "data": {"error": f"Invalid PID: {pid}", "code": "BAD_ARGS"}})
+        return
+    if (not isinstance(addresses, list) or not addresses or len(addresses) > 16
+            or any(not isinstance(a, int) or a <= 0 for a in addresses)):
+        emit({"type": "result", "data": {"error": "addresses must be 1..16 positive ints", "code": "BAD_ARGS"}})
+        return
+    if not isinstance(anchor_offset, int) or anchor_offset < 0 or anchor_offset > 0x1000:
+        emit({"type": "result", "data": {"error": "anchor_offset must be 0..0x1000", "code": "BAD_ARGS"}})
+        return
+    if not isinstance(read_size, int) or read_size < 64 or read_size > 0x1000:
+        emit({"type": "result", "data": {"error": "read_size must be 64..0x1000", "code": "BAD_ARGS"}})
+        return
+    if not _process_exists(pid):
+        emit({"type": "result", "data": {"error": f"Process {pid} is not running", "code": "NO_PROCESS"}})
+        return
+
+    reader = None
+    try:
+        # Same policy as read_memory: hijack attach with direct fallback.
+        try:
+            from core.stealth import StealthReader
+            from core.stealth.config import AccessMethod, StealthConfig
+            reader = StealthReader(pid=pid, config=StealthConfig(method=AccessMethod.HIJACK))
+        except Exception as e:
+            _log(f"Hijack attach failed ({e}); using direct read", "warn")
+            from core.memory import MemoryReader
+            reader = MemoryReader(pid=pid)
+
+        from core.scanner import PatternScanner
+        from core.signature_generator import SignatureGenerator
+        gen = SignatureGenerator(reader, PatternScanner(reader))
+        cands = gen.generate_from_addresses(
+            addresses, read_size=read_size, anchor_offset=anchor_offset,
+            verify_matches=bool(verify),
+        )
+        emit({"type": "result", "data": {
+            "pid": pid,
+            "addresses": addresses,
+            "verified": bool(verify),
+            "candidates": [{
+                "pattern": c.pattern,
+                "strategy": c.strategy,
+                "length": c.length,
+                "concrete_ratio": round(c.concrete_ratio, 3),
+                "scan_matches": c.scan_matches,
+                "score": round(c.score, 3),
+            } for c in cands],
+        }})
+    except Exception as e:
+        emit({"type": "result", "data": {"error": str(e), "code": "SIGGEN_FAILED"}})
+    finally:
+        if reader:
+            try:
+                reader.close()
+            except Exception:
+                pass
+
+
 _AC_DEFINITIONS = {
     "eac": {
         "name": "Easy Anti-Cheat",

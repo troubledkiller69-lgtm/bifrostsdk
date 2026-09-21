@@ -33,7 +33,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import gui_bridge
 from gui_bridge import (
     list_processes,
-    run_dump, run_dump_history, run_dump_diff,
+    run_dump, run_dump_history, run_dump_diff, run_make_signature,
     run_analyze_probe, run_analyze, run_decompile_fn, run_analyze_export,
     run_hexdump_at, run_disasm_at, run_xrefs_at, run_callgraph_at, run_search_callsites, run_symbols, run_strings,
     run_read_memory, run_driver_list, run_driver_test,
@@ -192,6 +192,20 @@ def _t_readmem(a):
     return _tool_result(final or {"error": "no result"})
 
 
+def _t_makesig(a):
+    addrs = a["addresses"]
+    if isinstance(addrs, str):
+        addrs = [x.strip() for x in addrs.split(",") if x.strip()]
+    final, _ = _capture(run_make_signature, {
+        "pid": int(a["pid"]),
+        "addresses": [_addr(x) for x in addrs],
+        "anchor_offset": _addr(a.get("anchor_offset", 0)),
+        "read_size": int(a.get("read_size", 256)),
+        "verify": bool(a.get("verify", True)),
+    })
+    return _tool_result(final or {"error": "no result"})
+
+
 def _t_dump(a):
     # run_dump validates pid/name itself and emits structured errors —
     # pass through so the agent sees NO_PROCESS/BAD_ARGS, not exceptions.
@@ -316,6 +330,17 @@ TOOLS = {
             "size": {"type": "integer", "description": "Bytes (default 64)"},
         }, "required": ["pid", "address"]},
         _t_readmem,
+    ),
+    "make_signature": (
+        "Generate AOB signatures from 1-16 known-good addresses in a live process. Returns scored candidates (tight/balanced/loose).",
+        {"type": "object", "properties": {
+            "pid": {"type": "integer"},
+            "addresses": {"type": "array", "items": _ADDR, "description": "Known-good addresses (more = better classification)"},
+            "anchor_offset": _ADDR,
+            "read_size": {"type": "integer", "description": "Bytes per address, 64..4096 (default 256)"},
+            "verify": {"type": "boolean", "description": "Full-process verification scan (default true; false = fast)"},
+        }, "required": ["pid", "addresses"]},
+        _t_makesig,
     ),
     "dump": (
         "Dump engine offsets from a live process (Source/UE/Unity...). Blocks until done (minutes). Needs a running game + matching engine.",

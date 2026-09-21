@@ -55,6 +55,11 @@ export default function MemoryViewerPage() {
   const [writeHex, setWriteHex] = useState('');
   const [writeError, setWriteError] = useState('');
   const [gotoOff, setGotoOff] = useState('');
+  const [sigAddrs, setSigAddrs] = useState('');
+  const [sigVerify, setSigVerify] = useState(true);
+  const [sigCands, setSigCands] = useState(null);
+  const [sigLoading, setSigLoading] = useState(false);
+  const [sigError, setSigError] = useState('');
 
   const api = window.bifrost;
   const intervalRef = useRef(null);
@@ -161,6 +166,31 @@ export default function MemoryViewerPage() {
       if (window.bifrost?.toast) window.bifrost.toast(`Deref → 0x${hex}`, 'success');
       setTimeout(() => readMemory(), 120);
     } catch (e) { setWriteError(e?.message || String(e)); }
+  };
+
+  const makeSignature = async () => {
+    if (!api || !pid) return;
+    const addrs = sigAddrs.split(/[\s,]+/).map(s => s.trim()).filter(Boolean)
+      .map(s => parseInt(s.replace(/^0x/i, ''), 16)).filter(n => !isNaN(n) && n > 0);
+    if (!addrs.length) { setSigError('Enter 1..16 hex addresses, comma-separated'); return; }
+    if (addrs.length > 16) { setSigError('Max 16 addresses'); return; }
+    setSigLoading(true); setSigError(''); setSigCands(null);
+    try {
+      const res = await api.command('make_signature', {
+        pid: parseInt(pid), addresses: addrs.slice(0, 16), verify: sigVerify,
+      });
+      const p = res?.type === 'result' ? res.data : res;
+      if (p?.error) {
+        setSigError(p.code ? `${p.code}: ${p.error}` : p.error);
+      } else if (p && Array.isArray(p.candidates)) {
+        setSigCands(p.candidates);
+        if (!p.candidates.length) setSigError('No candidates — bytes too uniform (concrete ratio < 0.3 at every window)');
+        else if (window.bifrost?.toast) window.bifrost.toast(`${p.candidates.length} candidates`, 'success');
+      } else {
+        setSigError('Unexpected response from backend');
+      }
+    } catch (e) { setSigError(e?.message || String(e)); }
+    setSigLoading(false);
   };
 
   const writeMemory = async () => {
@@ -341,6 +371,42 @@ export default function MemoryViewerPage() {
                 {writeError && <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--error)', marginTop: 4 }}>{writeError}</div>}
               </>
             )}
+
+            <div style={{ marginTop: 16, borderTop: '1px solid var(--border)', paddingTop: 10 }}>
+              <div className="hex-interp-title" style={{ fontWeight: 600, textShadow: '0 1px 0 rgba(0,0,0,0.6)' }}>Signature</div>
+              <div style={{ fontSize: 10, color: 'var(--text-ghost)', fontFamily: 'var(--font-mono)', margin: '4px 0 6px', lineHeight: 1.5 }}>
+                AOB from known-good addresses. More addresses = better classification.
+              </div>
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <input className="input-field" placeholder="7FF61A2B4000, 7FF61A2C8000" value={sigAddrs} onChange={e=>setSigAddrs(e.target.value)} style={{ flex: 1, fontSize: 11, padding: '6px 8px' }} />
+                <button className="btn" style={{ fontSize: 10, padding: '6px 8px' }} title="Append current selection address"
+                  onClick={()=>{ const a = selectedStart>=0 ? fmtAddr(baseAddr+selectedStart) : fmtAddr(baseAddr); setSigAddrs(prev => prev ? prev.replace(/[\s,]+$/,'') + ', ' + a : a); }}
+                  disabled={!memoryData}>+</button>
+              </div>
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 6 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--text-muted)', cursor: 'pointer', fontFamily: 'var(--font-mono)' }}>
+                  <button className={`settings-toggle ${sigVerify ? 'on' : ''}`} onClick={() => setSigVerify(!sigVerify)} aria-label="Verify matches" />
+                  Verify
+                </label>
+                <div style={{ flex: 1 }} />
+                <button className="btn btn-primary" style={{ fontSize: 10, padding: '6px 10px' }} onClick={makeSignature} disabled={!pid || sigLoading}>{sigLoading ? 'Scanning...' : 'Make Sig'}</button>
+              </div>
+              {sigError && <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--error)', marginTop: 4 }}>{sigError}</div>}
+              {sigCands && sigCands.length > 0 && (
+                <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {sigCands.slice(0, 6).map((c, i) => (
+                    <div key={i} style={{ border: '1px solid var(--border)', borderRadius: 3, padding: '6px 8px', background: 'rgba(0,0,0,0.3)' }}>
+                      <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, wordBreak: 'break-all', lineHeight: 1.5, color: i === 0 ? '#7EFF3F' : 'var(--text)' }}>{c.pattern}</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4, fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-muted)' }}>
+                        <span>{c.strategy} · {c.length}B · {Math.round(c.concrete_ratio*100)}%{sigVerify || c.scan_matches ? ` · ${c.scan_matches} hit${c.scan_matches===1?'':'s'}` : ''} · {c.score}</span>
+                        <div style={{ flex: 1 }} />
+                        <button className="btn" style={{ padding: '2px 8px', fontSize: 10 }} onClick={()=>{ if(navigator.clipboard) navigator.clipboard.writeText(c.pattern).then(()=>window.bifrost?.toast && window.bifrost.toast('Pattern copied','success')); }}>Copy</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
 
             <div className="hex-bookmarks">
               <div className="hex-interp-title" style={{ marginTop: 16, fontWeight: 600, textShadow: '0 1px 0 rgba(0,0,0,0.6)' }}>

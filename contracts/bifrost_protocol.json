@@ -80,6 +80,18 @@
       "response": "{type:'result', data: {pid, address, written: number}} or {type:'result', data: {error, code}}",
       "notes": "Raw process memory write for the Memory Viewer. Direct attach only — never a kernel driver. ptr chain deref uses read_memory repeatedly."
     },
+    "make_signature": {
+      "direction": "request-response",
+      "args": {
+        "pid": "number (32-bit)",
+        "addresses": "array of int (1..16 known-good addresses)",
+        "anchor_offset": "number, 0..0x1000 (default 0)",
+        "read_size": "number, 64..0x1000 (default 256)",
+        "verify": "bool (default true — full-process match verification)"
+      },
+      "response": "{type:'result', data: {pid, addresses, verified, candidates:[{pattern, strategy, length, concrete_ratio, scan_matches, score}]}} or {error, code: BAD_ARGS | NO_PROCESS | SIGGEN_FAILED}",
+      "notes": "AOB signature generation for the Memory Viewer. Classifies bytes across the given addresses (tight/balanced/loose strategies, 16/24/32/48 windows), scores by verification scan. verify:false skips the full-process scans (fast path). Hijack attach with direct fallback, same as read_memory."
+    },
     "ac_detect": {
       "direction": "request-response",
       "args": {},

@@ -7,6 +7,7 @@ export type BifrostCommand =
   | 'bridge_info'
   | 'read_memory'
   | 'write_memory'
+  | 'make_signature'
   | 'ac_detect'
   | 'analyze_probe'
   | 'decompile_fn'
@@ -25,6 +26,9 @@ export type BifrostStreamingCommand = 'dump' | 'generate' | 'analyze' | 'analyze
 
 export interface ReadMemoryArgs { pid: number; address: number; size: number; }
 export interface WriteMemoryArgs { pid: number; address: number; bytes: number[]; }
+export interface MakeSignatureArgs { pid: number; addresses: number[]; anchor_offset?: number; read_size?: number; verify?: boolean; }
+export interface SignatureCandidate { pattern: string; strategy: string; length: number; concrete_ratio: number; scan_matches: number; score: number; }
+export interface MakeSignatureResult { pid: number; addresses: number[]; verified: boolean; candidates: SignatureCandidate[]; }
 export interface AnalyzerHexdumpArgs { addr: number; size?: number; }
 export interface AnalyzerDisasmArgs { addr: number; size?: number; }
 export interface AnalyzerXrefsArgs { addr: number; }

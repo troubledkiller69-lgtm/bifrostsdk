@@ -69,6 +69,7 @@ class SignatureGenerator:
         addresses: list[int],
         read_size: int = 0x100,
         anchor_offset: int = 0,
+        verify_matches: bool = True,
     ) -> list[SignatureCandidate]:
         """
         Read *read_size* bytes from each address, classify each byte, and
@@ -79,6 +80,9 @@ class SignatureGenerator:
         addresses : known-good entity base addresses (at least 1)
         read_size : how many bytes to read from each entity
         anchor_offset : byte offset within the entity to center signatures on
+        verify_matches : when False, skip the full-process verification
+            scans (fast path — scan_matches stays 0 and score falls back to
+            concrete ratio + length + strategy only)
         """
         if not addresses:
             return []
@@ -125,18 +129,20 @@ class SignatureGenerator:
                 ))
 
         # 5. Score candidates by scanning the process for false positives
+        strategy_bonus = {"balanced": 0.2, "tight": 0.1, "loose": 0.0}
+        expected = len(addresses)
         for cand in candidates:
-            cand.scan_matches = self._count_matches(cand.pattern)
+            if verify_matches:
+                cand.scan_matches = self._count_matches(cand.pattern)
             # Prefer: high concrete ratio, low match count (ideally = expected),
             # longer patterns, balanced strategy
-            strategy_bonus = {"balanced": 0.2, "tight": 0.1, "loose": 0.0}
-            expected = len(addresses)
             if cand.scan_matches > 0:
                 uniqueness = expected / cand.scan_matches
             else:
                 uniqueness = 0.0
+            uniqueness_w = 0.5 if verify_matches else 0.0
             cand.score = (
-                uniqueness * 0.5
+                uniqueness * uniqueness_w
                 + cand.concrete_ratio * 0.3
                 + (cand.length / 48.0) * 0.1
                 + strategy_bonus.get(cand.strategy, 0)

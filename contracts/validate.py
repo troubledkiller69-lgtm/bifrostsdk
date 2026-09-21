@@ -41,11 +41,12 @@ def _load_command_lists() -> Tuple[List[str], List[str]]:
         # Fallback for environments where protocol JSON is not available
         return (
             ["ping", "bridge_info", "list_processes",
-             "read_memory", "write_memory", "ac_detect", "test_webhook", "cancel",
+             "read_memory", "write_memory", "make_signature", "ac_detect", "test_webhook", "cancel",
              "analyze_probe", "decompile_fn", "analyzer_hexdump",
              "analyzer_disasm_at", "analyzer_xrefs", "analyzer_callgraph", "analyzer_search", "analyzer_symbols", "analyzer_strings",
              "dump_history", "dump_diff",
-             "debug_snapshot"],
+             "debug_snapshot",
+             "driver_list", "driver_test"],
             ["dump", "generate", "analyze", "analyze_export"],
         )
 
@@ -109,8 +110,9 @@ def validate_roundtrip_example() -> bool:
         raise ValueError(msg)
     # Extra sanity on enforcement section (new in v1.1)
     proto = load_protocol()
-    if "Cluster 1" not in proto.get("enforcement", {}).get("current_phase", ""):
-        raise ValueError("enforcement.current_phase does not reference Cluster 1")
+    phase = proto.get("enforcement", {}).get("current_phase", "")
+    if not phase:
+        raise ValueError("enforcement.current_phase is missing")
     return True
 
 

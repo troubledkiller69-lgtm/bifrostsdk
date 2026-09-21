@@ -164,7 +164,11 @@ Change the protocol file first, always.
 
 ## MCP server
 
-`mcp_server.py` exposes the backend as MCP tools over stdio — zero new dependencies (hand-rolled JSON-RPC, runs on the canonical 3.14). 18 tools: `list_processes`, `dump`, `dump_history`, `dump_diff`, `analyze_probe`, `analyze`, `decompile_fn`, `analyze_export`, `hexdump`, `disasm`, `xrefs`, `callgraph`, `search_callsites`, `symbols`, `strings`, `read_memory`, `driver_list`, `driver_test`. Streaming ops block to completion and return the result plus a log tail; outputs cap at 100KB.
+`mcp_server.py` exposes the backend as MCP tools over stdio — zero new dependencies (hand-rolled JSON-RPC, runs on the canonical 3.14). 19 tools: `list_processes`, `dump`, `dump_history`, `dump_diff`, `make_signature`, `analyze_probe`, `analyze`, `decompile_fn`, `analyze_export`, `hexdump`, `disasm`, `xrefs`, `callgraph`, `search_callsites`, `symbols`, `strings`, `read_memory`, `driver_list`, `driver_test`. Streaming ops block to completion and return the result plus a log tail; outputs cap at 100KB.
+
+## Signature generation
+
+The Memory page has a Signature section: paste 1–16 known-good hex addresses (the `+` button appends your current selection), hit Make Sig, get scored AOB candidates back — tight/balanced/loose strategies across 16/24/32/48-byte windows, each with concrete ratio, verification hit count, and score. Best first, one click to copy. `verify` on means a full-process scan per candidate (slow but honest — a 2-hit pattern on 2 addresses is unique); off is the fast path. Same thing over `make_signature` on the bridge and MCP, so agents can mint their own patterns.
 
 Claude Code:
 

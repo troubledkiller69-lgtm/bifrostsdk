@@ -29,7 +29,7 @@ const ALL_STREAMING_CHANNELS = Object.values(STREAMING_CHANNELS).flatMap(s => Ob
 const ALLOWED_COMMANDS = [
   'ping', 'bridge_info',
   'list_processes',
-  'test_webhook', 'read_memory', 'write_memory', 'ac_detect',
+  'test_webhook', 'read_memory', 'write_memory', 'make_signature', 'ac_detect',
   'analyze_probe', 'decompile_fn',
   'analyzer_hexdump', 'analyzer_disasm_at', 'analyzer_xrefs', 'analyzer_callgraph', 'analyzer_search',
   'analyzer_symbols', 'analyzer_strings',
@@ -47,6 +47,7 @@ const COMMAND_TIMEOUTS = {
   analyzer_callgraph: 180000,
   analyzer_search: 300000,
   analyzer_disasm_at: 30000,
+  make_signature: 300000,
 };
 const DEFAULT_COMMAND_TIMEOUT = 15000;
 
