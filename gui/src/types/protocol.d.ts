@@ -8,6 +8,7 @@ export type BifrostCommand =
   | 'read_memory'
   | 'write_memory'
   | 'make_signature'
+  | 'rescan_signatures'
   | 'ac_detect'
   | 'analyze_probe'
   | 'decompile_fn'
@@ -29,6 +30,9 @@ export interface WriteMemoryArgs { pid: number; address: number; bytes: number[]
 export interface MakeSignatureArgs { pid: number; addresses: number[]; anchor_offset?: number; read_size?: number; verify?: boolean; }
 export interface SignatureCandidate { pattern: string; strategy: string; length: number; concrete_ratio: number; scan_matches: number; score: number; }
 export interface MakeSignatureResult { pid: number; addresses: number[]; verified: boolean; candidates: SignatureCandidate[]; }
+export interface SigPackEntry { name: string; pattern: string; rip?: { offset: number; insn_len: number }; expect?: 'unique' | 'any'; module?: string; }
+export interface SigPack { name: string; module?: string; entries: SigPackEntry[]; }
+export interface SigRescanResult { pack: string; total: number; healthy: number; broken: number; ambiguous: number; errors: number; results: Array<{ name: string; status: string; hits: number[]; resolved: number | null }>; }
 export interface AnalyzerHexdumpArgs { addr: number; size?: number; }
 export interface AnalyzerDisasmArgs { addr: number; size?: number; }
 export interface AnalyzerXrefsArgs { addr: number; }

@@ -164,7 +164,11 @@ Change the protocol file first, always.
 
 ## MCP server
 
-`mcp_server.py` exposes the backend as MCP tools over stdio — zero new dependencies (hand-rolled JSON-RPC, runs on the canonical 3.14). 19 tools: `list_processes`, `dump`, `dump_history`, `dump_diff`, `make_signature`, `analyze_probe`, `analyze`, `decompile_fn`, `analyze_export`, `hexdump`, `disasm`, `xrefs`, `callgraph`, `search_callsites`, `symbols`, `strings`, `read_memory`, `driver_list`, `driver_test`. Streaming ops block to completion and return the result plus a log tail; outputs cap at 100KB.
+`mcp_server.py` exposes the backend as MCP tools over stdio — zero new dependencies (hand-rolled JSON-RPC, runs on the canonical 3.14). 20 tools: `list_processes`, `dump`, `dump_history`, `dump_diff`, `make_signature`, `rescan_signatures`, `analyze_probe`, `analyze`, `decompile_fn`, `analyze_export`, `hexdump`, `disasm`, `xrefs`, `callgraph`, `search_callsites`, `symbols`, `strings`, `read_memory`, `driver_list`, `driver_test`. Streaming ops block to completion and return the result plus a log tail; outputs cap at 100KB.
+
+## Signature packs + health checks
+
+`core/sigpacks.py` — JSON packs (`{name, module?, entries:[{name, pattern, rip?, expect?, module?}]}`) revalidated against a live pid or a file on disk. Per entry: `ok` / `broken` (0 hits — died this patch) / `ambiguous` (2+ hits, pattern too short). RIP entries resolve inside the scan call (`addr + insn_len + disp`), so callers never hand-roll the math. Disk mode needs no game running — point it at a patched binary with an `image_base` and get VAs back. Same thing over `rescan_signatures` on the bridge and MCP. Pair with Make Sig: mint patterns in Memory, save the pack, rescan after every patch.
 
 ## Signature generation
 

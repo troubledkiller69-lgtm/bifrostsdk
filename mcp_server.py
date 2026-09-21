@@ -33,7 +33,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import gui_bridge
 from gui_bridge import (
     list_processes,
-    run_dump, run_dump_history, run_dump_diff, run_make_signature,
+    run_dump, run_dump_history, run_dump_diff, run_make_signature, run_rescan_signatures,
     run_analyze_probe, run_analyze, run_decompile_fn, run_analyze_export,
     run_hexdump_at, run_disasm_at, run_xrefs_at, run_callgraph_at, run_search_callsites, run_symbols, run_strings,
     run_read_memory, run_driver_list, run_driver_test,
@@ -206,6 +206,20 @@ def _t_makesig(a):
     return _tool_result(final or {"error": "no result"})
 
 
+def _t_rescansigs(a):
+    args = {"pack": a["pack"]}
+    if a.get("pid"):
+        args["pid"] = int(a["pid"])
+    if a.get("file"):
+        args["file"] = str(a["file"])
+    if a.get("image_base"):
+        args["image_base"] = _addr(a["image_base"])
+    if a.get("module"):
+        args["module"] = str(a["module"])
+    final, _ = _capture(run_rescan_signatures, args)
+    return _tool_result(final or {"error": "no result"})
+
+
 def _t_dump(a):
     # run_dump validates pid/name itself and emits structured errors —
     # pass through so the agent sees NO_PROCESS/BAD_ARGS, not exceptions.
@@ -341,6 +355,17 @@ TOOLS = {
             "verify": {"type": "boolean", "description": "Full-process verification scan (default true; false = fast)"},
         }, "required": ["pid", "addresses"]},
         _t_makesig,
+    ),
+    "rescan_signatures": (
+        "Revalidate a JSON signature pack against a live pid or a file on disk. Reports ok/broken/ambiguous per entry with RIP-resolved addresses.",
+        {"type": "object", "properties": {
+            "pack": {"type": "object", "description": "{name, module?, entries:[{name, pattern, rip?, expect?, module?}]}"},
+            "pid": {"type": "integer"},
+            "file": {"type": "string", "description": "Disk mode path (no game needed)"},
+            "image_base": _ADDR,
+            "module": {"type": "string", "description": "Default module for live mode"},
+        }, "required": ["pack"]},
+        _t_rescansigs,
     ),
     "dump": (
         "Dump engine offsets from a live process (Source/UE/Unity...). Blocks until done (minutes). Needs a running game + matching engine.",

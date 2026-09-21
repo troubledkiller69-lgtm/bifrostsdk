@@ -1105,6 +1105,48 @@ def run_make_signature(args):
                 pass
 
 
+def run_rescan_signatures(args):
+    """Revalidate a JSON signature pack against a live process or a file.
+
+    args: {pack:{name, module?, entries:[{name,pattern,rip?,expect?,module?}]},
+           pid?, file?, image_base?, module?}
+    Exactly one of pid / file. Disk mode needs no running game.
+    Returns: {pack,total,healthy,broken,ambiguous,errors,results:[...]}
+    """
+    pack = args.get("pack", {})
+    pid = args.get("pid", 0)
+    file = args.get("file", "")
+    image_base = args.get("image_base", 0)
+    module = args.get("module", "")
+    if not isinstance(pack, dict):
+        emit({"type": "result", "data": {"error": "pack must be an object", "code": "BAD_ARGS"}})
+        return
+    if pid and file:
+        emit({"type": "result", "data": {"error": "give exactly one of pid / file", "code": "BAD_ARGS"}})
+        return
+    if pid and (not isinstance(pid, int) or pid <= 0 or pid > 0xFFFFFFFF):
+        emit({"type": "result", "data": {"error": f"Invalid PID: {pid}", "code": "BAD_ARGS"}})
+        return
+    if pid and not _process_exists(pid):
+        emit({"type": "result", "data": {"error": f"Process {pid} is not running", "code": "NO_PROCESS"}})
+        return
+    if file and not isinstance(file, str):
+        emit({"type": "result", "data": {"error": "file must be a path string", "code": "BAD_ARGS"}})
+        return
+    if image_base and (not isinstance(image_base, int) or image_base <= 0):
+        emit({"type": "result", "data": {"error": "image_base must be a positive int", "code": "BAD_ARGS"}})
+        return
+
+    from core.sigpacks import rescan_pack
+    try:
+        out = rescan_pack(pack, pid=pid or 0, module=module or "",
+                          file=file or "", image_base=image_base or 0)
+    except Exception as e:
+        emit({"type": "result", "data": {"error": str(e), "code": "RESCAN_FAILED"}})
+        return
+    emit({"type": "result", "data": out})
+
+
 _AC_DEFINITIONS = {
     "eac": {
         "name": "Easy Anti-Cheat",

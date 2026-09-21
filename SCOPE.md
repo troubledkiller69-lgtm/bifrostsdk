@@ -104,7 +104,9 @@ Plus: `Ctrl+K` command palette (13 pages + actions, fuzzy scored), `Ctrl+1..13` 
 
 ## MCP server
 
-`mcp_server.py` — zero-dependency stdio JSON-RPC (`2024-11-05`), 19 tools wrapping the same `gui_bridge.run_*` handlers agents would otherwise click through: `list_processes`, `dump`, `dump_history`, `dump_diff`, `make_signature`, `analyze_probe`, `analyze`, `decompile_fn`, `analyze_export`, `hexdump`, `disasm`, `xrefs`, `callgraph`, `search_callsites`, `symbols`, `strings`, `read_memory`, `driver_list`, `driver_test`. Streaming ops block to completion and return the result plus a log tail. 100KB output cap. Registered in `opencode.json` as the `bifrost` local server. Deliberately no `write_memory` — reads are safe to delegate, writes stay human-gated.
+`mcp_server.py` — zero-dependency stdio JSON-RPC (`2024-11-05`), 20 tools wrapping the same `gui_bridge.run_*` handlers agents would otherwise click through: `list_processes`, `dump`, `dump_history`, `dump_diff`, `make_signature`, `rescan_signatures`, `analyze_probe`, `analyze`, `decompile_fn`, `analyze_export`, `hexdump`, `disasm`, `xrefs`, `callgraph`, `search_callsites`, `symbols`, `strings`, `read_memory`, `driver_list`, `driver_test`.
+
+Signature packs (`core/sigpacks.py`): JSON packs revalidated per entry (`ok`/`broken`/`ambiguous`) against a live pid or a disk file, RIP-resolve inside the scan, disk mode needs no running game. Exposed as `rescan_signatures` on bridge + MCP. Streaming ops block to completion and return the result plus a log tail. 100KB output cap. Registered in `opencode.json` as the `bifrost` local server. Deliberately no `write_memory` — reads are safe to delegate, writes stay human-gated.
 
 ## Outputs, schema, CLIs
 

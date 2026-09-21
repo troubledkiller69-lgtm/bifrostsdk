@@ -41,7 +41,7 @@ def _load_command_lists() -> Tuple[List[str], List[str]]:
         # Fallback for environments where protocol JSON is not available
         return (
             ["ping", "bridge_info", "list_processes",
-             "read_memory", "write_memory", "make_signature", "ac_detect", "test_webhook", "cancel",
+             "read_memory", "write_memory", "make_signature", "rescan_signatures", "ac_detect", "test_webhook", "cancel",
              "analyze_probe", "decompile_fn", "analyzer_hexdump",
              "analyzer_disasm_at", "analyzer_xrefs", "analyzer_callgraph", "analyzer_search", "analyzer_symbols", "analyzer_strings",
              "dump_history", "dump_diff",

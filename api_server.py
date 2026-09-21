@@ -11,7 +11,7 @@ _busy_stream = None
 
 # Import existing logic
 from gui_bridge import (
-    KNOWN_GAME_EXES, list_processes, run_dump, run_generate, run_read_memory, run_write_memory, run_make_signature, run_ac_detect,
+    KNOWN_GAME_EXES, list_processes, run_dump, run_generate, run_read_memory, run_write_memory, run_make_signature, run_rescan_signatures, run_ac_detect,
     run_test_webhook, cancel_operation,
     run_analyze_probe, run_analyze, run_decompile_fn, run_analyze_export,
     run_hexdump_at, run_disasm_at, run_xrefs_at, run_callgraph_at, run_search_callsites, run_symbols, run_strings,
@@ -179,6 +179,9 @@ def process_command(cmd_line):
             response = _pick_result(captured)
         elif command == 'make_signature':
             run_make_signature(args)
+            response = _pick_result(captured)
+        elif command == 'rescan_signatures':
+            run_rescan_signatures(args)
             response = _pick_result(captured)
         elif command == 'ac_detect':
             run_ac_detect(args)
