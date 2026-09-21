@@ -16,6 +16,7 @@ from gui_bridge import (
     run_analyze_probe, run_analyze, run_decompile_fn, run_analyze_export,
     run_hexdump_at, run_disasm_at, run_xrefs_at, run_callgraph_at, run_search_callsites, run_symbols, run_strings,
     run_debug_snapshot, run_driver_list, run_driver_test,
+    run_dump_history, run_dump_diff,
 )
 from gui_bridge import _op_begin, _op_end, _op_result_error
 
@@ -217,6 +218,12 @@ def process_command(cmd_line):
             response = _pick_result(captured)
         elif command == 'driver_test':
             run_driver_test(args)
+            response = _pick_result(captured)
+        elif command == 'dump_history':
+            run_dump_history(args)
+            response = _pick_result(captured)
+        elif command == 'dump_diff':
+            run_dump_diff(args)
             response = _pick_result(captured)
         elif command == 'ping':
             response = {

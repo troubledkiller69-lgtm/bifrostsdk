@@ -142,6 +142,16 @@ Every transport self-tests at connect time (open -> probe read -> verify) and re
 
 **Driver Bay `loaded`** — `driver_list` now reports `loaded` per profile via SCM `QueryServiceStatus` (true = service running right now, false = stopped/missing, null = query unavailable). A `LOADED` badge marks drivers a previous Test Load or dump left mapped.
 
+## Dump history + drift
+
+Every successful dump auto-archives `offsets.json` to `output/<game>/.history/<UTC-stamp>.json` (newest 20, sidecar with engine/class/field counts — archiving never breaks the dump result). `dump_history` lists them, `dump_diff` diffs any two via the same logic as `scripts/compare_dumps.py` (`drift` true when fields changed or classes removed). The Diff page has a History picker (game → before/after → Compare) next to the manual file loader.
+
+**Watch mode** — Dump page `Watch` re-dumps the armed target every 5/15/30/60 min (timer lives in App, survives navigation, pauses for queues and running dumps). Each completion compares class/field counts against the previous run; drift logs `[WATCH]` and toasts. Pair with history: every watch cycle archives, so morning-after forensics is one diff away.
+
+## IDA database cache
+
+`%TEMP%/bifrost_ida_cache/<sha256>_<ida>/` keeps the `.idb` set between runs. Re-analyzing an unchanged binary restores it next to the target first, so IDA goes incremental instead of another 5–15 min full pass — then the set moves back to cache (your target dir stays clean). Fingerprint is hash + size, so a patched binary automatically re-analyzes from scratch. The analyze log says `database cache hit` when it kicks in.
+
 ## The bridge protocol
 
 `contracts/bifrost_protocol.json` is the single source of truth for the Electron <-> Python surface — commands, streaming commands, event and error shapes. v1.3. Enforcement:
@@ -154,7 +164,7 @@ Change the protocol file first, always.
 
 ## MCP server
 
-`mcp_server.py` exposes the backend as MCP tools over stdio — zero new dependencies (hand-rolled JSON-RPC, runs on the canonical 3.14). 16 tools: `list_processes`, `dump`, `analyze_probe`, `analyze`, `decompile_fn`, `analyze_export`, `hexdump`, `disasm`, `xrefs`, `callgraph`, `search_callsites`, `symbols`, `strings`, `read_memory`, `driver_list`, `driver_test`. Streaming ops block to completion and return the result plus a log tail; outputs cap at 100KB.
+`mcp_server.py` exposes the backend as MCP tools over stdio — zero new dependencies (hand-rolled JSON-RPC, runs on the canonical 3.14). 18 tools: `list_processes`, `dump`, `dump_history`, `dump_diff`, `analyze_probe`, `analyze`, `decompile_fn`, `analyze_export`, `hexdump`, `disasm`, `xrefs`, `callgraph`, `search_callsites`, `symbols`, `strings`, `read_memory`, `driver_list`, `driver_test`. Streaming ops block to completion and return the result plus a log tail; outputs cap at 100KB.
 
 Claude Code:
 

@@ -851,6 +851,19 @@ def run_dump(args):
             "engine": engine,
             "output_dir": output_dir,
         }
+        # Archive into output/<game>/.history/ for drift diffing — never
+        # let history break the dump result, it reports its own status.
+        try:
+            from core.dump_history import archive_dump
+            hist = archive_dump(output_dir, engine=engine)
+            if hist.get("archived"):
+                _log(f"History archived: {hist['stamp']} "
+                     f"({hist['classes']} classes)")
+                result_data["history"] = hist
+            else:
+                _log(f"History skipped: {hist.get('reason', '?')}", "warn")
+        except Exception as hist_err:
+            _log(f"History archive failed: {hist_err}", "warn")
         emit({"type": "result", "data": result_data})
         _op_end("ok", f"{dumper.progress.classes_found} classes, "
                       f"{dumper.progress.fields_found} fields")
@@ -1650,6 +1663,29 @@ def run_driver_test(args):
             emit({"type": "result", "data": {"error": probe_err or "Probe failed", "code": "PROBE_FAILED", "key": key, "stage": probe_stage}})
     except Exception as e:
         emit({"type": "result", "data": {"error": str(e), "code": "DRIVER_TEST_FAILED"}})
+
+def run_dump_history(args):
+    """List archived offsets.json snapshots per game for the Diff page."""
+    try:
+        from core.dump_history import list_history
+        emit({"type": "result", "data": list_history(PROJECT_ROOT)})
+    except Exception as e:
+        emit({"type": "result", "data": {"error": str(e), "code": "HISTORY_FAILED"}})
+
+
+def run_dump_diff(args):
+    """Diff two snapshots (or live output dirs) via compare_dumps logic."""
+    try:
+        from core.dump_history import diff_snapshots
+        old = args.get("old", "")
+        new = args.get("new", "")
+        if not old or not new:
+            emit({"type": "result", "data": {"error": "Need old + new paths", "code": "BAD_ARGS"}})
+            return
+        emit({"type": "result", "data": diff_snapshots(old, new)})
+    except Exception as e:
+        emit({"type": "result", "data": {"error": str(e), "code": "DIFF_FAILED"}})
+
 
 def run_debug_snapshot(args):
     """Operation diagnostics snapshot — the 'is it stuck or dead?' answer.

@@ -1,4 +1,4 @@
-import React, { useState, useContext } from 'react';
+import React, { useState, useContext, useEffect } from 'react';
 import { ToastContext } from '../App';
 
 function computeDiff(before, after) {
@@ -53,6 +53,49 @@ export default function DiffPage() {
   const toast = useContext(ToastContext);
 
   const api = window.bifrost;
+
+  // History mode — every successful dump auto-archives into
+  // output/<game>/.history/. Pick two snapshots, diff server-side.
+  const [history, setHistory] = useState(null);
+  const [histGame, setHistGame] = useState('');
+  const [histBefore, setHistBefore] = useState('');
+  const [histAfter, setHistAfter] = useState('');
+  const [histDiff, setHistDiff] = useState(null);
+  const [histBusy, setHistBusy] = useState(false);
+  const [histError, setHistError] = useState('');
+
+  useEffect(() => {
+    if (!api?.dumpHistory) return;
+    api.dumpHistory()
+      .then((r) => {
+        const p = r?.type === 'result' ? r.data : r;
+        if (p && !p.error) {
+          setHistory(p.games || {});
+          const games = Object.keys(p.games || {});
+          if (games.length === 1) setHistGame(games[0]);
+        }
+      })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const histEntries = histGame && history ? (history[histGame] || []) : [];
+
+  const runHistDiff = async () => {
+    if (!api?.dumpDiff || !histBefore || !histAfter) return;
+    setHistBusy(true);
+    setHistError('');
+    setHistDiff(null);
+    try {
+      const r = await api.dumpDiff(histBefore, histAfter);
+      const p = r?.type === 'result' ? r.data : r;
+      if (p?.error) setHistError(p.code ? `${p.code}: ${p.error}` : p.error);
+      else setHistDiff(p);
+    } catch (e) {
+      setHistError(e?.message || String(e));
+    }
+    setHistBusy(false);
+  };
 
   const showToast = (msg, type = 'error') => {
     if (window.bifrost?.toast) window.bifrost.toast(msg, type);
@@ -141,6 +184,67 @@ export default function DiffPage() {
       {parseError && (
         <div role="alert" style={{ background: 'var(--error-soft)', border: '1px solid rgba(217,74,74,0.22)', borderRadius: 5, padding: '8px 12px', marginBottom: 12, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--error)' }}>
           {parseError}
+        </div>
+      )}
+
+      {(history && Object.keys(history).length > 0) && (
+        <div style={{ marginBottom: 12, padding: '10px 12px', borderRadius: 5, background: '#0a0a0c', border: '1px solid rgba(126,255,63,0.18)', borderTop: '1px solid rgba(126,255,63,0.28)', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.08)' }}>
+          <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>History</span>
+          <select className="input-field" style={{ fontSize: 12, minWidth: 140 }} value={histGame} onChange={(e) => { setHistGame(e.target.value); setHistBefore(''); setHistAfter(''); setHistDiff(null); }}>
+            <option value="">Game…</option>
+            {Object.keys(history).map((g) => <option key={g} value={g}>{g} ({history[g].length})</option>)}
+          </select>
+          <select className="input-field" style={{ fontSize: 12, minWidth: 170 }} value={histBefore} onChange={(e) => setHistBefore(e.target.value)} disabled={!histGame}>
+            <option value="">Before…</option>
+            {histEntries.map((en) => <option key={en.stamp} value={en.path}>{en.stamp} · {en.classes}c/{en.fields}f</option>)}
+          </select>
+          <span style={{ color: 'var(--text-ghost)', fontFamily: 'var(--font-mono)', fontSize: 11 }}>vs</span>
+          <select className="input-field" style={{ fontSize: 12, minWidth: 170 }} value={histAfter} onChange={(e) => setHistAfter(e.target.value)} disabled={!histGame}>
+            <option value="">After…</option>
+            {histEntries.map((en) => <option key={en.stamp} value={en.path}>{en.stamp} · {en.classes}c/{en.fields}f</option>)}
+          </select>
+          <button className="btn btn-primary" style={{ fontSize: 11, padding: '6px 14px' }} onClick={runHistDiff} disabled={!histBefore || !histAfter || histBusy}>{histBusy ? 'DIFFING…' : 'Compare'}</button>
+        </div>
+      )}
+      {histError && (
+        <div role="alert" style={{ background: 'var(--error-soft)', border: '1px solid rgba(217,74,74,0.22)', borderRadius: 5, padding: '8px 12px', marginBottom: 12, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--error)' }}>
+          {histError}
+        </div>
+      )}
+      {histDiff && (
+        <div style={{ background: '#0a0a0c', border: `1px solid ${histDiff.drift ? 'rgba(217,74,74,0.25)' : 'rgba(126,255,63,0.22)'}`, borderRadius: 5, padding: '10px 12px', marginBottom: 12, fontFamily: 'var(--font-mono)', fontSize: 11 }}>
+          <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginBottom: histDiff.drift ? 8 : 0 }}>
+            <span style={{ color: histDiff.drift ? '#d94a4a' : '#7EFF3F', fontWeight: 700 }}>{histDiff.drift ? `DRIFT: ${histDiff.changed_fields} changed fields` : 'NO DRIFT'}</span>
+            <span style={{ color: 'var(--text-muted)' }}>{Object.keys(histDiff.changed || {}).length} mod classes</span>
+            <span style={{ color: '#7EFF3F' }}>+{(histDiff.added || []).length} new</span>
+            <span style={{ color: '#d94a4a' }}>−{(histDiff.removed || []).length} del</span>
+            <span style={{ color: 'var(--text-ghost)' }}>{histDiff.unchanged_count} ok</span>
+          </div>
+          {(histDiff.removed || []).length > 0 && (
+            <div style={{ marginTop: 6 }}>
+              <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 1, color: '#d94a4a', marginBottom: 4 }}>Removed classes</div>
+              {(histDiff.removed || []).slice(0, 30).map((n) => <div key={n} style={{ color: '#d94a4a' }}>− {n}</div>)}
+            </div>
+          )}
+          {(histDiff.added || []).length > 0 && (
+            <div style={{ marginTop: 6 }}>
+              <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 1, color: '#7EFF3F', marginBottom: 4 }}>New classes</div>
+              {(histDiff.added || []).slice(0, 30).map((n) => <div key={n} style={{ color: '#7EFF3F' }}>+ {n}</div>)}
+            </div>
+          )}
+          {Object.keys(histDiff.changed || {}).length > 0 && (
+            <div style={{ marginTop: 6, maxHeight: 320, overflow: 'auto' }}>
+              <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 1, color: '#94a3b8', marginBottom: 4 }}>Changed</div>
+              {Object.keys(histDiff.changed).sort().slice(0, 60).map((cls) => (
+                <div key={cls} style={{ marginBottom: 6 }}>
+                  <div style={{ color: '#f8fafc', fontWeight: 700 }}>~ {cls}</div>
+                  {(histDiff.changed[cls] || []).slice(0, 20).map((line, i) => (
+                    <div key={i} style={{ color: 'var(--text-secondary)', paddingLeft: 12 }}>{line}</div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

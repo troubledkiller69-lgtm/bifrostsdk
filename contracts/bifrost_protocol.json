@@ -174,6 +174,21 @@
       "response": "{status:'ok', cancelled: <operation>}",
       "notes": "Sets the shared CANCEL_EVENT. Streaming operations abort at their next checkpoint."
     },
+    "dump_history": {
+      "direction": "request-response",
+      "args": {},
+      "response": "{type:'result', data: {games: {<game>: [{stamp, path, engine, classes, fields}]}}}",
+      "notes": "Archived offsets.json snapshots per game (output/<game>/.history/, newest 20). Every successful dump auto-archives."
+    },
+    "dump_diff": {
+      "direction": "request-response",
+      "args": {
+        "old": "string (snapshot path or dump dir)",
+        "new": "string (snapshot path or dump dir)"
+      },
+      "response": "{type:'result', data: {old, new, removed:[], added:[], changed:{<class>:[lines]}, unchanged_count, changed_fields, drift}} or {error, code: NO_SNAPSHOT | BAD_SNAPSHOT | BAD_ARGS}",
+      "notes": "Offset drift between two dumps via scripts/compare_dumps logic. drift true when fields changed or classes removed."
+    },
     "driver_list": {
       "direction": "request-response",
       "args": {},

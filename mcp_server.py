@@ -33,7 +33,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import gui_bridge
 from gui_bridge import (
     list_processes,
-    run_dump,
+    run_dump, run_dump_history, run_dump_diff,
     run_analyze_probe, run_analyze, run_decompile_fn, run_analyze_export,
     run_hexdump_at, run_disasm_at, run_xrefs_at, run_callgraph_at, run_search_callsites, run_symbols, run_strings,
     run_read_memory, run_driver_list, run_driver_test,
@@ -211,6 +211,16 @@ def _t_dump(a):
     return _tool_result(final or {"error": "no result"}, ev)
 
 
+def _t_dumphistory(a):
+    final, _ = _capture(run_dump_history, a or {})
+    return _tool_result(final or {"error": "no result"})
+
+
+def _t_dumpdiff(a):
+    final, _ = _capture(run_dump_diff, {"old": str(a["old"]), "new": str(a["new"])})
+    return _tool_result(final or {"error": "no result"})
+
+
 def _t_drivers(a):
     final, _ = _capture(run_driver_list, a or {})
     return _tool_result(final or {"error": "no result"})
@@ -320,6 +330,19 @@ TOOLS = {
             "regenerate": {"type": "boolean", "description": "Regenerate even if dump exists (default false)"},
         }, "required": ["pid", "name"]},
         _t_dump,
+    ),
+    "dump_history": (
+        "List archived offsets.json snapshots per game (auto-saved on every successful dump).",
+        {"type": "object", "properties": {}},
+        _t_dumphistory,
+    ),
+    "dump_diff": (
+        "Offset drift between two dumps (snapshot paths or dump dirs). Same logic as scripts/compare_dumps.py.",
+        {"type": "object", "properties": {
+            "old": {"type": "string", "description": "Older snapshot path or dump dir"},
+            "new": {"type": "string", "description": "Newer snapshot path or dump dir"},
+        }, "required": ["old", "new"]},
+        _t_dumpdiff,
     ),
     "driver_list": (
         "List known + BYO vulnerable-driver profiles with file presence, hash and SCM loaded status.",

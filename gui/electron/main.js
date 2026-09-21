@@ -33,6 +33,7 @@ const ALLOWED_COMMANDS = [
   'analyze_probe', 'decompile_fn',
   'analyzer_hexdump', 'analyzer_disasm_at', 'analyzer_xrefs', 'analyzer_callgraph', 'analyzer_search',
   'analyzer_symbols', 'analyzer_strings',
+  'dump_history', 'dump_diff',
   'debug_snapshot',
   'driver_list', 'driver_test',
 ];

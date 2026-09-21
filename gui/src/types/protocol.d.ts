@@ -62,6 +62,8 @@ export interface WindowBifrost {
   analyzerSymbols: () => Promise<BridgeResult<unknown>>;
   analyzerStrings: (minLen?: number, cap?: number) => Promise<BridgeResult<unknown>>;
   debugSnapshot: (includeThreads?: boolean) => Promise<BridgeResult<unknown>>;
+  dumpHistory: () => Promise<BridgeResult<{ games: Record<string, Array<{ stamp: string; path: string; engine: string; classes: number; fields: number }>> }>>;
+  dumpDiff: (oldPath: string, newPath: string) => Promise<BridgeResult<unknown>>;
   driverList: () => Promise<BridgeResult<{ drivers: unknown[]; count: number }>>;
   driverTest: (driver: string, force?: boolean) => Promise<BridgeResult<unknown>>;
 }

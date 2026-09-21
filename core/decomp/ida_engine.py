@@ -125,6 +125,99 @@ class _IdaCancelled(RuntimeError):
     pass
 
 
+# ------------------------------------------------------------------
+# Database reuse: IDA's auto-analysis is the slow part (5-15 min on a
+# real binary). Keep the .idb set in %TEMP%/bifrost_ida_cache/<sha256>/
+# keyed by file hash + size + IDA exe, so re-analyzing an unchanged
+# binary goes incremental. The cache restores next to the target before
+# the run and moves back after; anything else still gets deleted.
+# ------------------------------------------------------------------
+
+def _ida_cache_dir() -> str:
+    d = os.path.join(tempfile.gettempdir(), "bifrost_ida_cache")
+    try:
+        os.makedirs(d, exist_ok=True)
+    except OSError:
+        pass
+    return d
+
+
+def _file_fingerprint(file_path: str) -> str | None:
+    """sha256 + size of the target. 12MB hashes in ~50ms — negligible."""
+    try:
+        import hashlib
+        h = hashlib.sha256()
+        with open(file_path, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+        return f"{h.hexdigest()}_{os.path.getsize(file_path)}"
+    except OSError:
+        return None
+
+
+def _cache_slot(file_path: str, exe: str) -> str | None:
+    fp = _file_fingerprint(file_path)
+    if not fp:
+        return None
+    exe_tag = os.path.basename(exe).lower().replace(".exe", "")
+    safe = "".join(c if (c.isalnum() or c in "_-") else "_" for c in exe_tag)[:32]
+    slot = os.path.join(_ida_cache_dir(), f"{fp[:32]}_{safe}")
+    try:
+        os.makedirs(slot, exist_ok=True)
+    except OSError:
+        return None
+    return slot
+
+
+def _restore_cached_idb(file_path: str, slot: str) -> bool:
+    """Copy the cached .idb set next to the target. True if anything restored."""
+    stem, _ = os.path.splitext(os.path.basename(file_path))
+    target_dir = os.path.dirname(os.path.abspath(file_path))
+    restored = False
+    try:
+        names = os.listdir(slot)
+    except OSError:
+        return False
+    if not any(n.startswith(stem) for n in names):
+        return False  # slot belongs to a different filename — don't mix
+    for n in names:
+        if n == "meta.json" or not n.startswith(stem):
+            continue
+        try:
+            import shutil
+            shutil.copy2(os.path.join(slot, n), os.path.join(target_dir, n))
+            restored = True
+        except OSError:
+            pass
+    return restored
+
+
+def _store_idb_to_cache(file_path: str, slot: str, before: set) -> None:
+    """Move newly-created IDA files next to the target into the cache slot."""
+    stem, _ = os.path.splitext(os.path.basename(file_path))
+    target_dir = os.path.dirname(os.path.abspath(file_path))
+    fp = _file_fingerprint(file_path)
+    try:
+        names = os.listdir(target_dir)
+    except OSError:
+        return
+    for n in names:
+        if n in before or not n.startswith(stem):
+            continue
+        if not n[len(stem):].lower() in _IDB_EXTS:
+            continue
+        try:
+            import shutil
+            shutil.move(os.path.join(target_dir, n), os.path.join(slot, n))
+        except OSError:
+            pass
+    try:
+        with open(os.path.join(slot, "meta.json"), "w", encoding="utf-8") as f:
+            json.dump({"file": os.path.basename(file_path), "fp": fp}, f)
+    except OSError:
+        pass
+
+
 _IDB_EXTS = (".idb", ".i64", ".til", ".nam", ".id0", ".id1", ".id2")
 
 
@@ -178,6 +271,9 @@ def ida_analyze(file_path: str, timeout: int = 1500, cancel=None, log=None,
     os.close(fd_json)
     fd_py, script_py = tempfile.mkstemp(prefix="bifrost_ida_", suffix=".py")
     before = _snapshot_siblings(file_path)
+    # Reuse: restore the cached database so IDA goes incremental
+    slot = _cache_slot(file_path, exe)
+    reused = bool(slot) and _restore_cached_idb(file_path, slot)
     try:
         script = _IDA_SCRIPT.replace("{OUT_JSON}", out_json.replace("\\", "\\\\"))
         with os.fdopen(fd_py, "w", encoding="utf-8") as fh:
@@ -257,9 +353,16 @@ def ida_analyze(file_path: str, timeout: int = 1500, cancel=None, log=None,
                 continue
         data["bodies"] = bodies
         data["ida_exe"] = exe
+        data["db_reused"] = bool(reused)
         return data
     finally:
         for p in (out_json, script_py):
             try: os.remove(p)
             except: pass
-        _cleanup_idb_droppings(file_path, before)
+        if slot:
+            # Move the database into the cache (keeps the target dir clean
+            # AND makes the next run incremental)
+            _store_idb_to_cache(file_path, slot, before)
+            _cleanup_idb_droppings(file_path, before)  # stragglers
+        else:
+            _cleanup_idb_droppings(file_path, before)

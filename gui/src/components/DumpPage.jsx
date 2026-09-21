@@ -7,7 +7,7 @@ const accessTone = (acc) => {
   return 'bad';
 };
 
-export default function DumpPage({ engine, process, progress, logs, onStart, onStop, dumpOptions, setDumpOptions, accessInfo, lastDump, onRedump, stealth, driverKey, setDriverKey, dumpQueue, setDumpQueue, queueRunning, onRunQueue }) {
+export default function DumpPage({ engine, process, progress, logs, onStart, onStop, dumpOptions, setDumpOptions, accessInfo, lastDump, onRedump, stealth, driverKey, setDriverKey, dumpQueue, setDumpQueue, queueRunning, onRunQueue, watch, setWatch }) {
   const queueTarget = () => {
     if (!engine || !process || !setDumpQueue) return;
     const entry = { engine, pid: process.pid, name: process.name };
@@ -225,6 +225,20 @@ export default function DumpPage({ engine, process, progress, logs, onStart, onS
             Queue Target{(dumpQueue?.length || 0) > 0 ? ` (${dumpQueue.length})` : ''}
           </button>
         )}
+      </div>
+
+      <div style={{ marginTop: 12, padding: '10px 12px', borderRadius: 5, background: '#0a0a0c', border: `1px solid ${watch?.on ? 'rgba(126,255,63,0.22)' : 'rgba(255,255,255,0.08)'}`, borderTop: '1px solid rgba(255,255,255,0.12)', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.08)' }}>
+        <span style={{ fontSize: 11, color: watch?.on ? '#7EFF3F' : 'var(--text-muted)', fontFamily: 'var(--font-mono)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>● Watch{watch?.on ? ' — on' : ' — off'}</span>
+        <select className="input-field" style={{ fontSize: 12, minWidth: 130 }} value={watch?.minutes || 15} onChange={(e) => setWatch && setWatch({ ...(watch || {}), minutes: parseInt(e.target.value, 10) })} title="Re-dump interval">
+          <option value={5}>every 5m</option>
+          <option value={15}>every 15m</option>
+          <option value={30}>every 30m</option>
+          <option value={60}>every 60m</option>
+        </select>
+        <button className={`btn ${watch?.on ? 'btn-primary' : ''}`} style={{ fontSize: 11, padding: '6px 12px' }} onClick={() => setWatch && setWatch({ ...(watch || { minutes: 15 }), on: !watch?.on })} title="Re-dump this target on an interval; drift vs the previous dump logs + toasts">
+          {watch?.on ? 'Stop' : 'Start'}
+        </button>
+        <span style={{ fontSize: 11, color: 'var(--text-ghost)', fontFamily: 'var(--font-mono)' }}>re-dumps {process?.name || 'target'} · drift alerts in log</span>
       </div>
 
       {(dumpQueue?.length || 0) > 0 && (

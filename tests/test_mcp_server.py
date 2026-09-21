@@ -31,7 +31,7 @@ def test_initialize_handshake():
 def test_tools_list_covers_bridge():
     r = _call("tools/list")
     names = {t["name"] for t in r["result"]["tools"]}
-    for expected in ("list_processes", "dump", "analyze", "decompile_fn", "analyze_export",
+    for expected in ("list_processes", "dump", "dump_history", "dump_diff", "analyze", "decompile_fn", "analyze_export",
                      "hexdump", "disasm", "xrefs", "callgraph", "search_callsites", "symbols", "strings",
                      "read_memory", "driver_list", "driver_test", "analyze_probe"):
         assert expected in names

@@ -66,6 +66,8 @@ contextBridge.exposeInMainWorld('bifrost', {
   analyzerSymbols: () => ipcRenderer.invoke('python-command', { command: 'analyzer_symbols', args: {} }),
   analyzerStrings: (minLen, cap) => ipcRenderer.invoke('python-command', { command: 'analyzer_strings', args: { min_len: minLen, cap } }),
   debugSnapshot: (includeThreads) => ipcRenderer.invoke('python-command', { command: 'debug_snapshot', args: { include_threads: !!includeThreads } }),
+  dumpHistory: () => ipcRenderer.invoke('python-command', { command: 'dump_history', args: {} }),
+  dumpDiff: (oldPath, newPath) => ipcRenderer.invoke('python-command', { command: 'dump_diff', args: { old: oldPath, new: newPath } }),
   driverList: () => ipcRenderer.invoke('python-command', { command: 'driver_list', args: {} }),
   driverTest: (driver, force) => ipcRenderer.invoke('python-command', { command: 'driver_test', args: { driver, force: !!force } }),
   onAnalyzeLog: (cb) => {

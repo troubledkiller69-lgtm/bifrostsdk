@@ -106,6 +106,11 @@ export default function App() {
   const [dumpQueue, setDumpQueue] = useState(() => loadSession('dumpQueue', []));
   const dumpQueueRef = useRef([]);
   useEffect(() => { dumpQueueRef.current = dumpQueue; saveSession('dumpQueue', dumpQueue); }, [dumpQueue]);
+  // Watch mode: re-dump the current target on an interval, alert on drift.
+  const [watch, setWatch] = useState(() => loadSession('watch', { on: false, minutes: 15 }));
+  const watchRef = useRef(watch);
+  useEffect(() => { watchRef.current = watch; saveSession('watch', watch); }, [watch]);
+  const prevDumpRef = useRef(null); // {classes, fields} of the last completed dump
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [toasts, setToasts] = useState([]);
   const [confirm, setConfirm] = useState({ open: false, title: '', body: '', confirmLabel: 'Confirm', onConfirm: null });
@@ -267,6 +272,19 @@ export default function App() {
         advanceQueue(false);
         return;
       }
+      // Watch drift check: compare against the previous completed dump
+      const prev = prevDumpRef.current;
+      const cur = { classes: msg.data.classes || 0, fields: msg.data.fields || 0 };
+      if (prev && (prev.classes !== cur.classes || prev.fields !== cur.fields)) {
+        const dc = cur.classes - prev.classes;
+        const df = cur.fields - prev.fields;
+        const sign = (n) => (n >= 0 ? `+${n}` : `${n}`);
+        addLog(`[WATCH] drift: classes ${prev.classes}→${cur.classes} (${sign(dc)}), fields ${prev.fields}→${cur.fields} (${sign(df)})`, 'warn');
+        toast(`Offset drift: ${sign(dc)} classes, ${sign(df)} fields — check Diff`, 'info');
+      } else if (prev && watchRef.current.on) {
+        addLog(`[WATCH] no drift (${cur.classes}c/${cur.fields}f)`, 'info');
+      }
+      prevDumpRef.current = cur;
       setDumpResults(msg.data);
       addLog('Dump complete', 'success');
       if (!advanceQueue(true)) {
@@ -281,7 +299,7 @@ export default function App() {
     return () => {
       unsubs.forEach(unsub => unsub && unsub());
     };
-  }, [api, addLog]);
+  }, [api, addLog, toast]);
 
   const runDumpTarget = useCallback((target) => {
     if (!api || !target) return;
@@ -326,6 +344,40 @@ export default function App() {
   }, [selectedEngine, selectedProcess, runDumpTarget]);
 
   useEffect(() => { saveSession('lastDump', lastDump); }, [lastDump]);
+
+  // Watch timer: 30s tick, fires when the interval elapsed without a dump.
+  // Skips while a dump/queue runs or no target is armed. Survives page
+  // navigation (lives in App, not DumpPage).
+  const lastWatchRunRef = useRef(0);
+  const dumpRunningRef = useRef(false);
+  useEffect(() => { dumpRunningRef.current = dumpProgress.running; }, [dumpProgress.running]);
+  useEffect(() => {
+    const tick = () => {
+      const w = watchRef.current;
+      if (!w.on) return;
+      if (dumpRunningRef.current) return;
+      if (!selectedEngine || !selectedProcess) return;
+      if (dumpQueueRef.current.length > 0) return;
+      if (!runDumpTargetRef.current) return;
+      // don't double-fire: need a completed/idle backend
+      const mins = Math.max(1, parseInt(w.minutes, 10) || 15);
+      if (Date.now() - lastWatchRunRef.current < mins * 60 * 1000) return;
+      lastWatchRunRef.current = Date.now();
+      addLog(`[WATCH] interval elapsed (${mins}m) — re-dumping ${selectedProcess.name}`, 'info');
+      runDumpTargetRef.current({
+        engine: selectedEngine,
+        pid: selectedProcess.pid,
+        name: selectedProcess.name,
+      });
+    };
+    const id = setInterval(tick, 30000);
+    return () => clearInterval(id);
+  }, [api, selectedEngine, selectedProcess, addLog]);
+
+  // Pause the watch clock while a dump runs so the interval counts idle time
+  useEffect(() => {
+    if (dumpProgress.running) lastWatchRunRef.current = Date.now();
+  }, [dumpProgress.running]);
 
   const runQueueHead = useCallback(() => {
     const q = dumpQueueRef.current;
@@ -451,6 +503,8 @@ export default function App() {
             setDumpQueue={setDumpQueue}
             queueRunning={dumpProgress.running}
             onRunQueue={runQueueHead}
+            watch={watch}
+            setWatch={setWatch}
           />
         );
       case 'results':

@@ -243,6 +243,8 @@ def _analyze_ida(file_path: str, extra: dict, sink: LogSink, limit: int) -> dict
     imagebase = data.get("imagebase")
     bodies = data.get("bodies") or {}
     has_decompiler = bool(data.get("decompiler")) and len(bodies) > 0
+    if data.get("db_reused"):
+        sink.log("IDA database cache hit — incremental analysis, should be fast")
     sink.log(f"IDA found {len(functions)} functions (imagebase {imagebase:#x} if mapped)")
     if bodies:
         sink.log(f"IDA decompiled {len(bodies)} functions via hexrays")
