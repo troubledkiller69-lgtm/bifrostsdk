@@ -1,0 +1,11 @@
+{
+  "key": "throttlestop",
+  "filename": "ThrottleStop.sys",
+  "service_name": "ThrottleStop",
+  "device_path": "\\\\.\\ThrottleStop",
+  "strategy": "throttlestop",
+  "ioctl_read": "0x80006498",
+  "ioctl_write": "0x8000649C",
+  "known_hashes": [],
+  "description": "TechPowerUp ThrottleStop 3.0.0.0 (CVE-2025-7771). QWORD phys R/W, 8 bytes per call. Extract from ThrottleStop.exe via Resource Hacker. Sources: fxrstor/ThrottleStopPoC, Demoo1337/ThrottleStop."
+}

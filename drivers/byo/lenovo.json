@@ -1,0 +1,11 @@
+{
+  "key": "lenovo",
+  "filename": "LnvMSRIO.sys",
+  "service_name": "LnvMSRIO",
+  "device_path": "\\\\.\\WinMsrDev",
+  "strategy": "lenovo",
+  "ioctl_read": "0x9C406104",
+  "ioctl_write": "0x9C40A108",
+  "known_hashes": [],
+  "description": "Lenovo Dispatcher 3.0/3.1 (CVE-2025-8061, fixed in 3.1.0.41+). Struct phys R/W + MSR R/W. Sources: Quarkslab parts 1+2, segura2010/vxqs PoCs."
+}

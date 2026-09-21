@@ -1,0 +1,11 @@
+{
+  "key": "siv",
+  "filename": "SIVX64.sys",
+  "service_name": "SIVDRIVER",
+  "device_path": "\\\\.\\SIVDRIVER",
+  "strategy": "siv",
+  "ioctl_read": "0x10",
+  "ioctl_write": "0x14",
+  "known_hashes": [],
+  "description": "SIV System Information Viewer monitor (WHQL-signed thru 2026-07, unblocklisted). Raw integer IOCTLs, no auth. Drop SIVX64.sys next to the mapper. Sources: sai2fast/Vulnerable-Monitors, dwgx SIVX64/physmem_protocol.md."
+}

