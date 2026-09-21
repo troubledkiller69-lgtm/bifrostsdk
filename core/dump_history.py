@@ -1,15 +1,15 @@
 """Dump history — archive every successful offsets.json, diff any two.
 
 Layout: output/<game>/.history/<UTC-timestamp>.json (plus _meta with engine).
-Keeps the newest 20 per game, prunes the rest. compare reuses the
-battle-tested scripts/compare_dumps.diff_classes so CLI and GUI agree.
+Keeps the newest 20 per game, prunes the rest. compare reuses
+core/offset_diff.diff_classes (same logic as scripts/compare_dumps.py,
+frozen-safe) so CLI and GUI agree.
 """
 from __future__ import annotations
 
 import datetime
 import json
 import os
-import sys
 
 _HISTORY_DIR = ".history"
 _KEEP = 20
@@ -97,10 +97,7 @@ def list_history(project_root: str) -> dict:
 
 def diff_snapshots(old_path: str, new_path: str) -> dict:
     """Diff two offsets.json files (history entries or live dirs)."""
-    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                    "..", "scripts"))
-    from shared import find_offsets_json, load_offsets
-    from compare_dumps import diff_classes, hex_str
+    from .offset_diff import diff_classes, find_offsets_json, load_offsets
 
     old_json = old_path if str(old_path).endswith(".json") else find_offsets_json(old_path)
     new_json = new_path if str(new_path).endswith(".json") else find_offsets_json(new_path)
