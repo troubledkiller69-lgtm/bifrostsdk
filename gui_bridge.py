@@ -930,7 +930,21 @@ def run_generate(args):
             logger_callback=lambda msg: _log(msg),
         )
         ok = gen.generate()
-        emit({"type": "result", "data": {"success": ok, "path": gen.output_dir}})
+        data: dict = {"success": ok, "path": gen.output_dir}
+        # Multi-target SDK emitters (csharp/python/rust). opt-in via
+        # args.targets + args.sdk_packages (list of plain-dict packages);
+        # omitted = legacy C++-project-only behavior, unchanged.
+        targets = args.get("targets") or []
+        sdk_packages = args.get("sdk_packages") or []
+        if targets and sdk_packages:
+            from core.generator.emitters import emit_all, package_from_dict
+            pkgs = [package_from_dict(p) for p in sdk_packages]
+            written = emit_all(pkgs, output_dir,
+                               targets=list(targets),
+                               engine_name=args.get("engine_name", "Unknown"))
+            _log(f"Emitted SDK targets: {', '.join(f'{k} -> {v}' for k, v in written.items())}")
+            data["sdk_targets"] = written
+        emit({"type": "result", "data": data})
         _op_end("ok" if ok else "error", "generation finished")
     except Exception as e:
         _op_end("error", f"generation failed: {e}")

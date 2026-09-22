@@ -94,7 +94,7 @@ Plus: `Ctrl+K` command palette (13 pages + actions, fuzzy scored), `Ctrl+1..13` 
 
 ## Code generation
 
-`run_generate` turns a dump into a VS C++ scaffold: `.sln`, `.vcxproj`, `main.cpp`, `memory.h`, `driver.h`, `offsets.h`, IDA script. Streaming with progress.
+`run_generate` turns a dump into a VS C++ scaffold: `.sln`, `.vcxproj`, `main.cpp`, `memory.h`, `driver.h`, `offsets.h`, IDA script. Streaming with progress. Opt-in multi-target SDKs via `targets: ["csharp", "python", "rust"]` + `sdk_packages` (dicts coerced to `SDKPackage`): `core/generator/emitters.py` renders `LayoutKind.Explicit` C# structs, ctypes `Structure`s (import-tested binary-exact), and `#[repr(C)]` Rust — same pad-gap math as the C++ headers, pointers stay pointer-sized. Omitted targets = legacy C++-only behavior.
 
 ## Protocol + IPC
 
