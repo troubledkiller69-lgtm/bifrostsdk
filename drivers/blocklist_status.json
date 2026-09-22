@@ -1,7 +1,7 @@
 {
   "_meta": {
     "checked": "2026-09-22",
-    "source": "Microsoft recommended driver block rules (2026-05-01) + LOLDrivers catalog + local driversipolicy.p7b size cross-check. Re-verify per quarter via https://aka.ms/VulnerableDriverBlockList.",
+    "source": "Full census: LOLDrivers drivers.json (695 entries, 572 vulnerable) vs MS VulnerableDriverBlockList.zip DriverPolicy_Enforced.xml (1660 deny hashes + 172 filename signals). MS touch by catalog year: 2023 84%, 2024 44%, 2025 29%, 2026 5%. 251 true gaps, 69 pre-2025 never absorbed. Re-verify quarterly via https://aka.ms/VulnerableDriverBlockList.",
     "meaning": {
       "blocked": "hash/signer rule in the MS list — will not load on a default Win11 target with HVCI or the blocklist toggle on (0xC0000603 + Event 3077)",
       "gap": "no MS rule found as of the check date — loads today, expect quarterly absorbs",
@@ -17,8 +17,8 @@
     "gdrv.sys": {"status": "blocked", "note": "4x CVE-2018-19320-23, CISA KEV"},
     "Gdrv2.sys": {"status": "blocked", "note": "same family as gdrv.sys"},
     "WDTKernel.sys": {"status": "gap", "note": "LOLDrivers 2026-04, WHQL, no MS rule found"},
-    "SIVX64.sys": {"status": "gap", "note": "v5.85 loads despite HVCI per LOLDrivers #287, cert thru 2026-07"},
+    "SIVX64.sys": {"status": "gap", "note": "v5.85 loads despite HVCI per LOLDrivers #287; catalogued sample cert to 2029-10 (1 sample only — verify your build's hash)"},
     "ThrottleStop.sys": {"status": "blocked", "note": "catalogued hashes blocked (CVE-2025-7771); newest rebuilds lag the list"},
-    "LnvMSRIO.sys": {"status": "unknown", "note": "no catalogue or blocklist reference found"}
+    "LnvMSRIO.sys": {"status": "gap", "note": "LOLDrivers 2026-06, 10 samples, zero MS hash/filename touch, cert to 2038"}
   }
 }
