@@ -54,6 +54,63 @@ def ida_available() -> bool:
     exe = find_ida_exe()
     return bool(exe and os.path.isfile(exe))
 
+
+def _registered_python_dir() -> str | None:
+    """Dir of the Python IDA itself uses (registry Python3TargetDLL).
+
+    IDAPython resolves `python.exe` and latches onto the first one with a
+    sibling pyvenv.cfg — a venv (hermes agent, uv, conda) earlier on PATH
+    hijacks the interpreter and dies in a sys.prefix mismatch against the
+    registered DLL. Pointing PATH at the registered interpreter first
+    keeps IDA on the DLL-matching runtime.
+    """
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                            r"Software\Hex-Rays\IDA") as key:
+            dll, _ = winreg.QueryValueEx(key, "Python3TargetDLL")
+        d = os.path.dirname(os.path.abspath(dll))
+        if os.path.isfile(os.path.join(d, "python.exe")):
+            return d
+    except Exception:
+        pass
+    return None
+
+
+_VENV_PATH_HINTS = ("hermes", "venv", "virtualenv", "conda", "miniconda",
+                    "micromamba", ".venv")
+
+
+def _ida_child_env() -> dict:
+    """Sanitized env for the IDA batch child.
+
+    - Drops PYTHON*/VIRTUAL_ENV/CONDA* (a leaked venv poisons IDAPython).
+    - Strips venv dirs from PATH (pyvenv.cfg beside python.exe triggers
+      IDA 9's venv mode with the WRONG interpreter).
+    - Prepends the registered Python dir so IDA finds the DLL-matching
+      python.exe first. WindowsApps stub stays out of the way behind it.
+    """
+    env = dict(os.environ)
+    for key in list(env):
+        upper = key.upper()
+        if upper.startswith(("PYTHON", "VIRTUAL_", "CONDA", "_VIRTUAL")):
+            env.pop(key, None)
+    py_dir = _registered_python_dir()
+    clean = []
+    for part in env.get("PATH", "").split(";"):
+        if not part:
+            continue
+        lowered = part.lower()
+        if any(hint in lowered for hint in _VENV_PATH_HINTS):
+            continue
+        if py_dir and os.path.normcase(part) == os.path.normcase(py_dir):
+            continue
+        clean.append(part)
+    env["PATH"] = ";".join(([py_dir] if py_dir else []) + clean)
+    # Batch runs must never block on GUI dialogs (license prompts etc.).
+    # -B is picked up by the command line, not the env — see ida_analyze.
+    return env
+
 def ida_version(exe: str | None = None) -> str:
     """Version label without executing the binary.
 
@@ -127,6 +184,41 @@ idaapi.qexit(0)
 
 class _IdaCancelled(RuntimeError):
     pass
+
+
+def _classify_batch_failure(rc: int | None, stdout: bytes, stderr: bytes,
+                            exe: str) -> RuntimeError:
+    """Turn an empty/failed batch run into an actionable error.
+
+    Two signatures seen in the wild:
+    - IDAPython venv hijack: stdout names a "virtual environment
+      interpreter" (a venv python.exe won PATH and mismatched the
+      registered DLL). Sanitized env normally prevents this; if it still
+      fires, the venv is coming from outside PATH (App Paths, launcher).
+    - Instant silent exit (rc=1, no output at all, <2s): IDA died before
+      plugin init — on unlicensed/never-activated installs this is the
+      EULA/license gate ("License not yet accepted, cannot run in batch
+      mode" goes to a hidden dialog headless). Only fix is opening ida.exe
+      once and activating/accepting.
+    """
+    text = ((stdout or b"").decode(errors="ignore")
+            + (stderr or b"").decode(errors="ignore"))
+    if "virtual environment interpreter" in text:
+        return RuntimeError(
+            "IDA's Python latched onto a virtualenv interpreter "
+            f"(rc={rc}): {text.strip()[:300]} — BIFROST sanitizes PATH for "
+            "the IDA child, so check App Paths / py launcher shims, or set "
+            "the interpreter with idapyswitch.exe"
+        )
+    if not text.strip():
+        return RuntimeError(
+            f"IDA exited instantly with no output (rc={rc}, {exe}). "
+            "This is the license/EULA gate: IDA Pro needs a one-time "
+            "activation + EULA accept, which is impossible headless. "
+            "Open ida.exe once, activate your license and accept the EULA, "
+            "then retry. No ida.key/.hexlic was found on this machine."
+        )
+    return RuntimeError(f"IDA batch produced no JSON (rc={rc}): {text.strip()[:400]}")
 
 
 # ------------------------------------------------------------------
@@ -283,9 +375,10 @@ def ida_analyze(file_path: str, timeout: int = 1500, cancel=None, log=None,
         with os.fdopen(fd_py, "w", encoding="utf-8") as fh:
             fh.write(script)
 
-        # IDA batch: -A autonomous, -S script (auto-creates .idb next to file)
-        cmd = [exe, "-A", f"-S{script_py}", file_path]
-        env = dict(os.environ)
+        # IDA batch: -A autonomous, -B batch (no dialogs), -S script
+        # (auto-creates .idb next to file)
+        cmd = [exe, "-A", "-B", f"-S{script_py}", file_path]
+        env = _ida_child_env()
         try:
             n = max(0, min(int(decompile_limit), _IDA_DECOMP_CAP))
         except (TypeError, ValueError):
@@ -337,7 +430,7 @@ def ida_analyze(file_path: str, timeout: int = 1500, cancel=None, log=None,
         if not os.path.isfile(out_json) or os.path.getsize(out_json) == 0:
             out = ((_out or b"").decode(errors="ignore")[:800]
                    + (_err or b"").decode(errors="ignore")[:800])
-            raise RuntimeError(f"IDA batch produced no JSON (rc={rc}): {out[:400]}")
+            raise _classify_batch_failure(rc, _out, _err, exe)
 
         with open(out_json, "r", encoding="utf-8") as fh:
             data = json.load(fh)

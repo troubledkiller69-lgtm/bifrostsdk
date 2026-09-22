@@ -168,9 +168,13 @@ def probe() -> dict:
             "decompiler": False,
         },
         "ida": {
+            # exe-found only: IDA Pro needs a one-time ida.exe activation +
+            # EULA accept before batch runs work headless. A real analyze is
+            # the only true verification — failures now explain themselves.
             "available": bool(ida_exe and ida_available()),
             "exe": ida_exe or "",
             "version": ida_version(ida_exe) if ida_exe else "",
+            "batch_verified": False,
         },
         "iced": {"available": True},
         "default_engine": "rizin-ghidra" if exe else ("ida" if ida_exe else "iced-x86"),
