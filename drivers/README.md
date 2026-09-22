@@ -50,5 +50,6 @@ Driver-based access is an explicit opt-in from the GUI or the `dump` API (`steal
 - The mapper randomizes the staged filename and service name
 - Driver is copied to system temp with a generic name (wdf*.sys)
 - Service is deleted on cleanup — no persistent traces
-- VBS/HVCI will block unsigned or revoked drivers on some systems
-- WHQL-signed drivers (Dell WDT, Corsair) are less likely to be blocked by VBS
+- The Microsoft Vulnerable Driver Blocklist (`%windir%\System32\CodeIntegrity\driversipolicy.p7b`, on by default since Win11 22H2, force-enforced under HVCI/Smart App Control/S-mode) blocks by file hash + signer cert — not filename. Renaming the staged `wdf*.sys` / random service only dodges name-based detections, never CI hash rules. Blocked loads fail with `0xC0000603` (`STATUS_IMAGE_CERT_REVOKED`) + CodeIntegrity Event 3077.
+- Tier-1 set status (Sept 2026): iqvw64e / RTCore64 / dbutil_2_3 / gdrv / CorsairLLAccess64 = BLOCKED on default Win11 targets. Live gaps: SIVX64 v5.85, WDTKernel.sys. Run `scripts/check_blocklist.py` to verify against THIS machine's enforced policy.
+- WHQL signing alone means nothing for blocklisting — MS adds WHQL-signed drivers (e.g. psmounterex.sys, April 2026 KBs) routinely. Expect quarterly absorbs.

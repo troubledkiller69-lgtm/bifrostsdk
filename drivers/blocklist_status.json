@@ -1,0 +1,24 @@
+{
+  "_meta": {
+    "checked": "2026-09-22",
+    "source": "Microsoft recommended driver block rules (2026-05-01) + LOLDrivers catalog + local driversipolicy.p7b size cross-check. Re-verify per quarter via https://aka.ms/VulnerableDriverBlockList.",
+    "meaning": {
+      "blocked": "hash/signer rule in the MS list — will not load on a default Win11 target with HVCI or the blocklist toggle on (0xC0000603 + Event 3077)",
+      "gap": "no MS rule found as of the check date — loads today, expect quarterly absorbs",
+      "unknown": "no catalogue or blocklist reference found either way"
+    }
+  },
+  "drivers": {
+    "iqvw64e.sys": {"status": "blocked", "note": "founding blocklist member, CVE-2015-2291"},
+    "RTCore64.sys": {"status": "blocked", "note": "hash + cert rules, CVE-2019-16098"},
+    "dbutil_2_3.sys": {"status": "blocked", "note": "page-hash rules, CVE-2021-21551"},
+    "DbUtilDrv2.sys": {"status": "blocked", "note": "CVE-2021-36276 follow-up"},
+    "CorsairLLAccess64.sys": {"status": "blocked", "note": "FileRules carried; filename-qualified variants are HVCI-dependent (CVE-2025-59033)"},
+    "gdrv.sys": {"status": "blocked", "note": "4x CVE-2018-19320-23, CISA KEV"},
+    "Gdrv2.sys": {"status": "blocked", "note": "same family as gdrv.sys"},
+    "WDTKernel.sys": {"status": "gap", "note": "LOLDrivers 2026-04, WHQL, no MS rule found"},
+    "SIVX64.sys": {"status": "gap", "note": "v5.85 loads despite HVCI per LOLDrivers #287, cert thru 2026-07"},
+    "ThrottleStop.sys": {"status": "blocked", "note": "catalogued hashes blocked (CVE-2025-7771); newest rebuilds lag the list"},
+    "LnvMSRIO.sys": {"status": "unknown", "note": "no catalogue or blocklist reference found"}
+  }
+}
